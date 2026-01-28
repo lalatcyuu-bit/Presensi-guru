@@ -1,0 +1,5 @@
+CREATE TABLE guru (
+  id_guru SERIAL PRIMARY KEY,
+  nama_guru VARCHAR(100) NOT NULL,
+  nip VARCHAR(30) UNIQUE
+);
