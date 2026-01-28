@@ -1,11 +1,15 @@
-CREATE TABLE presensi (
+CREATE TABLE presensi_guru (
   id_presensi SERIAL PRIMARY KEY,
-  id_jadwal INT NOT NULL REFERENCES jadwal(id_jadwal) ON DELETE CASCADE,
-  tanggal DATE NOT NULL,
-  status status_presensi NOT NULL,
-  bukti_foto TEXT,
-  status_approve status_approve DEFAULT 'pending',
-  id_user_piket INT REFERENCES users(id_user),
-  waktu_input TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  waktu_approve TIMESTAMP
+  id_jadwal INT REFERENCES jadwal(id_jadwal),
+  tanggal DATE DEFAULT CURRENT_DATE,
+  status VARCHAR(20) CHECK (status IN ('Hadir', 'Tidak Hadir')),
+  foto_bukti TEXT NOT NULL,
+  diabsen_oleh INT REFERENCES users(id_user),
+  status_approve VARCHAR(20) DEFAULT 'Pending'
+    CHECK (status_approve IN ('Pending', 'Approved', 'Rejected')),
+  approved_by INT REFERENCES users(id_user),
+  catatan TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id_jadwal, tanggal)
 );

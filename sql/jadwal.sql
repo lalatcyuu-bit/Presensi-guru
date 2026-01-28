@@ -1,9 +1,19 @@
 CREATE TABLE jadwal (
-  id_jadwal SERIAL PRIMARY KEY,
-  id_user_km INT NOT NULL REFERENCES users(id_user) ON DELETE CASCADE,
-  id_guru INT NOT NULL REFERENCES guru(id_guru) ON DELETE CASCADE,
-  id_mapel INT NOT NULL REFERENCES mapel(id_mapel) ON DELETE CASCADE,
-  hari hari_enum NOT NULL,
-  jam_mulai TIME NOT NULL,
-  jam_selesai TIME NOT NULL
+    id SERIAL PRIMARY KEY,
+    id_kelas INT NOT NULL,
+    id_mapel INT NOT NULL,
+    id_guru INT NOT NULL,
+    day VARCHAR(10) NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+
+    CONSTRAINT fk_jadwal_kelas
+        FOREIGN KEY (id_kelas)
+        REFERENCES kelas(id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_jadwal_mapel
+        FOREIGN KEY (id_mapel)
+        REFERENCES mapel(id)
+        ON DELETE CASCADE
 );
