@@ -1,0 +1,8 @@
+CREATE TABLE users (
+  id_user SERIAL PRIMARY KEY,
+  email VARCHAR(100) UNIQUE NOT NULL,
+  password TEXT NOT NULL,
+  role role_user NOT NULL,
+  nama_tampilan VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
