@@ -16,6 +16,8 @@ app.use('/auth', require('./routes/auth.routes'));
 app.use('/users', require('./routes/user.routes'));
 app.use('/guru', require('./routes/guru.routes'));
 app.use('/mapel', require('./routes/mapel.routes'));
+app.use('/jadwal', require('./routes/jadwal.routes'));
+app.use('/presensi', require('./routes/presensi.routes'));
 
 
 
