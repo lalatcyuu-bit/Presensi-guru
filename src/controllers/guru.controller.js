@@ -1,39 +1,166 @@
 const pool = require('../db');
 
-exports.createGuru = async (req, res) => {
-  const { nama_guru, nip } = req.body;
+/* =======================
+   HELPER QUERY (JOIN MAPEL)
+======================= */
+const guruWithMapelQuery = `
+SELECT 
+  g.id_guru,
+  g.nama_guru,
+  g.nip,
+  COALESCE(
+    json_agg(
+      json_build_object(
+        'id_mapel', m.id_mapel,
+        'nama_mapel', m.nama_mapel
+      )
+    ) FILTER (WHERE m.id_mapel IS NOT NULL),
+    '[]'
+  ) AS mapel
+FROM guru g
+LEFT JOIN mapel m 
+  ON m.id_mapel = ANY (
+    SELECT jsonb_array_elements_text(g.mapel)::int
+  )
+GROUP BY g.id_guru
+`;
 
-  if (!nama_guru) {
-    return res.status(400).json({ message: 'nama_guru wajib diisi' });
+/* =======================
+   CREATE GURU
+======================= */
+exports.createGuru = async (req, res) => {
+  const { nama_guru, nip, mapel } = req.body;
+
+  if (!nama_guru || !Array.isArray(mapel) || mapel.length === 0) {
+    return res.status(400).json({ message: 'nama_guru & mapel wajib diisi' });
+  }
+
+  // validasi mapel
+  const cek = await pool.query(
+    `SELECT id_mapel FROM mapel WHERE id_mapel = ANY($1::int[])`,
+    [mapel]
+  );
+
+  if (cek.rowCount !== mapel.length) {
+    return res.status(400).json({ message: 'Mapel tidak valid' });
+  }
+
+  const insert = await pool.query(
+    `INSERT INTO guru (nama_guru, nip, mapel)
+     VALUES ($1, $2, $3)
+     RETURNING id_guru`,
+    [nama_guru, nip || null, JSON.stringify(mapel)]
+  );
+
+  const result = await pool.query(
+    guruWithMapelQuery + ` HAVING g.id_guru = $1`,
+    [insert.rows[0].id_guru]
+  );
+
+  res.status(201).json(result.rows[0]);
+};
+
+/* =======================
+   GET ALL GURU
+======================= */
+exports.getGuru = async (req, res) => {
+  const result = await pool.query(
+    guruWithMapelQuery + ` ORDER BY g.nama_guru ASC`
+  );
+  res.json(result.rows);
+};
+
+/* =======================
+   SEARCH GURU BY MAPEL
+======================= */
+exports.getGuruByMapel = async (req, res) => {
+  const { id_mapel } = req.query;
+
+  if (!id_mapel) {
+    return res.status(400).json({ message: 'id_mapel wajib' });
   }
 
   try {
-    // cek NIP jika diisi
-    if (nip) {
-      const cek = await pool.query(
-        'SELECT id_guru FROM guru WHERE nip = $1',
-        [nip]
-      );
-
-      if (cek.rowCount > 0) {
-        return res.status(409).json({ message: 'NIP sudah terdaftar' });
-      }
-    }
-
     const result = await pool.query(
-      `INSERT INTO guru (nama_guru, nip)
-       VALUES ($1, $2)
-       RETURNING *`,
-      [nama_guru, nip || null]
+      `
+      SELECT 
+        g.id_guru,
+        g.nama_guru,
+        g.nip,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id_mapel', m.id_mapel,
+              'nama_mapel', m.nama_mapel
+            )
+          ) FILTER (WHERE m.id_mapel IS NOT NULL),
+          '[]'
+        ) AS mapel
+      FROM guru g
+      LEFT JOIN mapel m 
+        ON m.id_mapel = ANY (
+          SELECT jsonb_array_elements_text(g.mapel)::int
+        )
+      WHERE g.mapel @> to_jsonb(ARRAY[$1]::int[])
+      GROUP BY g.id_guru
+      ORDER BY g.nama_guru ASC
+      `,
+      [id_mapel]
     );
 
-    res.status(201).json({
-      message: 'Guru berhasil ditambahkan',
-      data: result.rows[0]
-    });
-
+    res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
+};
+
+
+/* =======================
+   UPDATE GURU
+======================= */
+exports.updateGuru = async (req, res) => {
+  const { id } = req.params;
+  const { nama_guru, nip, mapel } = req.body;
+
+  if (!nama_guru || !Array.isArray(mapel)) {
+    return res.status(400).json({ message: 'data tidak valid' });
+  }
+
+  const cek = await pool.query(
+    `SELECT id_mapel FROM mapel WHERE id_mapel = ANY($1::int[])`,
+    [mapel]
+  );
+
+  if (cek.rowCount !== mapel.length) {
+    return res.status(400).json({ message: 'Mapel tidak valid' });
+  }
+
+  await pool.query(
+    `UPDATE guru
+     SET nama_guru = $1,
+         nip = $2,
+         mapel = $3
+     WHERE id_guru = $4`,
+    [nama_guru, nip || null, JSON.stringify(mapel), id]
+  );
+
+  const result = await pool.query(
+    guruWithMapelQuery + ` HAVING g.id_guru = $1`,
+    [id]
+  );
+
+  res.json(result.rows[0]);
+};
+
+/* =======================
+   DELETE GURU
+======================= */
+exports.deleteGuru = async (req, res) => {
+  await pool.query(
+    `DELETE FROM guru WHERE id_guru = $1`,
+    [req.params.id]
+  );
+
+  res.json({ message: 'Guru berhasil dihapus' });
 };
