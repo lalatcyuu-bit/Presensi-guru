@@ -47,4 +47,8 @@ Thumbs.db
 # Build
 # =====================
 dist/
+<<<<<<< HEAD
 build/
+=======
+build/
+>>>>>>> 1d9d230f2ef522f03462d071b36f038f3e16f52b
