@@ -4,7 +4,7 @@ const app = express();
 const cors = require('cors');
 
 app.use(cors({
-  origin: 'https://bgdr3s45-3000.asse.devtunnels.ms',
+  origin: 'https://bv8mb4zp-3000.asse.devtunnels.ms',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
