@@ -77,12 +77,19 @@ exports.deletePresensi = async (req, res) => {
 };
 
 exports.approvePresensiGuru = async (req, res) => {
-  const { id } = req.params;
-  const { status_approve, approved_by } = req.body;
+  const idPresensi = parseInt(req.params.id, 10);
+  const { status_approve } = req.body;
+
+  if (isNaN(idPresensi)) {
+    return res.status(400).json({ message: 'ID presensi tidak valid' });
+  }
 
   if (!['Approved', 'Rejected'].includes(status_approve)) {
     return res.status(400).json({ message: 'Status approve tidak valid' });
   }
+
+  // 🔥 DARI TOKEN
+  const approved_by = req.user.id;
 
   const result = await pool.query(
     `UPDATE presensi_guru
@@ -90,13 +97,50 @@ exports.approvePresensiGuru = async (req, res) => {
          approved_by = $2,
          updated_at = CURRENT_TIMESTAMP
      WHERE id_presensi = $3
+       AND status_approve = 'Pending'
      RETURNING *`,
-    [status_approve, approved_by, id]
+    [status_approve, approved_by, idPresensi]
   );
 
   if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'Presensi tidak ditemukan' });
+    return res.status(404).json({
+      message: 'Presensi tidak ditemukan atau sudah diproses'
+    });
   }
 
-  res.json(result.rows[0]);
+  res.json({
+    message: 'Presensi berhasil diproses',
+    data: result.rows[0]
+  });
 };
+
+// get presensi
+// exports.getDataApproved = async (req, res) => {
+//   const result = await pool.query(`
+//     SELECT 
+//       pg.id_presensi,
+//       pg.tanggal,
+//       pg.status,
+//       pg.foto_bukti,
+//       pg.status_approve,
+//       pg.catatan,
+//       pg.created_at,
+//       pg.updated_at,
+
+//       -- guru yang absen
+//       g.nama_guru AS diabsen_oleh_nama,
+
+//       -- user yang approve (piket)
+//       u.name AS approved_by_nama
+
+//     FROM presensi_guru pg
+//     LEFT JOIN guru g ON pg.diabsen_oleh = g.id_guru
+//     LEFT JOIN users u ON pg.approved_by = u.id
+//     ORDER BY pg.created_at DESC
+//   `);
+
+//   res.json({
+//     data: result.rows
+//   });
+// };
+
