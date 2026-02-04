@@ -74,10 +74,13 @@ exports.getGuru = async (req, res) => {
    SEARCH GURU BY MAPEL
 ======================= */
 exports.getGuruByMapel = async (req, res) => {
-  const { id_mapel } = req.query;
+  const id_mapel = parseInt(req.query.id_mapel, 10);
 
-  if (!id_mapel) {
-    return res.status(400).json({ message: 'id_mapel wajib' });
+  if (isNaN(id_mapel)) {
+    return res.status(400).json({
+      success: false,
+      message: 'id_mapel wajib dan harus angka'
+    });
   }
 
   try {
@@ -108,13 +111,28 @@ exports.getGuruByMapel = async (req, res) => {
       [id_mapel]
     );
 
-    res.json(result.rows);
+    if (result.rows.length === 0) {
+      return res.json({
+        message: 'Belum ada guru untuk mapel ini',
+        data: [],
+        total: 0
+      });
+    }
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: result.rows.length
+    });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
   }
 };
-
 
 /* =======================
    UPDATE GURU
