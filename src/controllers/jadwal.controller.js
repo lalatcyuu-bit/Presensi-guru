@@ -67,7 +67,7 @@ exports.getJadwal = async (req, res) => {
   const result = await pool.query(
     `SELECT j.*, c.name AS nama_kelas
      FROM jadwal j
-     JOIN classes c ON c.id = j.id_kelas
+     JOIN kelas c ON c.id = j.id_kelas
      ORDER BY hari, jam_mulai`
   );
 
