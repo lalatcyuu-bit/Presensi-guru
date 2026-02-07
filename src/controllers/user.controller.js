@@ -49,13 +49,41 @@ exports.createUser = async (req, res) => {
 ======================= */
 exports.getUsers = async (req, res) => {
   const result = await pool.query(
-    `SELECT u.id, u.name, u.username, u.id_role, u.id_kelas, r.name AS role_name
+    `SELECT 
+       u.id, 
+       u.name, 
+       u.username, 
+       u.id_role, 
+       u.id_kelas, 
+       r.name AS role_name,
+       k.id AS kelas_id,
+       k.name AS kelas_name,
+       k.tingkat AS kelas_tingkat,
+       k.jurusan AS kelas_jurusan
      FROM users u
      JOIN roles r ON r.id = u.id_role
+     LEFT JOIN kelas k ON k.id = u.id_kelas
      ORDER BY u.name ASC`
   );
 
-  res.json(result.rows);
+  const formattedData = result.rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    username: row.username,
+    id_role: row.id_role,
+    id_kelas: row.id_kelas,
+    role: {
+      name: row.role_name
+    },
+    kelas: row.kelas_id ? {
+      id: row.kelas_id,
+      name: row.kelas_name,
+      tingkat: row.kelas_tingkat,
+      jurusan: row.kelas_jurusan
+    } : null
+  }));
+
+  res.json(formattedData);
 };
 
 /* =======================

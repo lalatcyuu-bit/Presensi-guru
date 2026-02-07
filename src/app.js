@@ -6,7 +6,8 @@ const cors = require('cors');
 app.use(cors({
   origin: [
     'https://bv8mb4zp-3000.asse.devtunnels.ms',
-    'http://localhost:3000'
+    'http://localhost:3000',
+    'https://bgdr3s45-3000.asse.devtunnels.ms'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
