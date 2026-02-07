@@ -143,3 +143,34 @@ exports.nonAktifkanMapel = async (req, res) => {
     data: result.rows[0]
   });
 };
+
+/* =======================
+   DELETE MAPEL
+======================= */
+exports.deleteMapel = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM mapel WHERE id_mapel = $1 RETURNING *`,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Mapel berhasil dihapus',
+      data: result.rows[0]
+    });
+
+  } catch (err) {
+    if (err.code === '23503') {
+      return res.status(409).json({
+        message: 'Mapel tidak dapat dihapus karena masih digunakan oleh guru'
+      });
+    }
+
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
