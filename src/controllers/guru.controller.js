@@ -182,3 +182,43 @@ exports.deleteGuru = async (req, res) => {
 
   res.json({ message: 'Guru berhasil dihapus' });
 };
+
+/* =======================
+   GET GURU BY ID
+======================= */
+exports.getGuruById = async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+
+  if (isNaN(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'id_guru harus berupa angka'
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      guruWithMapelQuery + ` HAVING g.id_guru = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Guru tidak ditemukan'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
