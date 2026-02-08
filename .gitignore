@@ -1,50 +1,44 @@
-# =====================
-# Node.js
-# =====================
+# ===== Node.js =====
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# =====================
-# Environment
-# =====================
+# ===== Environment variables =====
 .env
+.env.*
+!.env.example
 
-# =====================
-# Database
-# =====================
-*.sqlite
-*.db
+# ===== Build output =====
+dist/
+build/
+.nuxt/
+.output/
 
-# =====================
-# Google API Credentials
-# =====================
-credentials.json
-src/credentials.json
-
-# =====================
-# Upload / Temp
-# =====================
-uploads/
-tmp/
-
-# =====================
-# Logs
-# =====================
+# ===== Logs =====
 logs/
 *.log
 
-# =====================
-# OS / Editor
-# =====================
+# ===== OS files =====
 .DS_Store
 Thumbs.db
+
+# ===== Editor / IDE =====
 .vscode/
 .idea/
+*.swp
 
-# =====================
-# Build
-# =====================
-dist/
-build/
+# ===== Coverage =====
+coverage/
+
+# ===== Upload / temp files =====
+uploads/
+tmp/
+
+# ===== Cloudinary / Credentials =====
+credentials.json
+
+# ===== Database =====
+*.sqlite
+*.db

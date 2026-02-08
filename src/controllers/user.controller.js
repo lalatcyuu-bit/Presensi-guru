@@ -1,8 +1,9 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
+const { uploadImage } = require('../utils/cloudinary');
 
 /* =======================
-   CREATE USER
+   CREATE USER (ADMIN)
 ======================= */
 exports.createUser = async (req, res) => {
   try {
@@ -20,24 +21,24 @@ exports.createUser = async (req, res) => {
       return res.status(400).json({ message: 'Role ini tidak boleh punya kelas' });
     }
 
-    const cekUser = await pool.query(
+    const cek = await pool.query(
       `SELECT id FROM users WHERE username = $1`,
       [username]
     );
-
-    if (cekUser.rowCount > 0) {
+    if (cek.rowCount) {
       return res.status(400).json({ message: 'Username sudah dipakai' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10);
 
     await pool.query(
-      `INSERT INTO users (name, username, password, id_role, id_kelas)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [name, username, hashedPassword, id_role, id_kelas || null]
+      `INSERT INTO users 
+       (name, username, password, id_role, id_kelas, is_profile_complete)
+       VALUES ($1, $2, $3, $4, $5, false)`,
+      [name, username, hashed, id_role, id_kelas || null]
     );
 
-    res.status(201).json({ message: 'Akun berhasil dibuat' });
+    res.status(201).json({ message: 'User berhasil dibuat' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -45,64 +46,67 @@ exports.createUser = async (req, res) => {
 };
 
 /* =======================
-   GET ALL USER
+   GET ALL USERS (ADMIN)
 ======================= */
 exports.getUsers = async (req, res) => {
-  const result = await pool.query(
-    `SELECT u.id, u.name, u.username, u.id_role, u.id_kelas, r.name AS role_name
-     FROM users u
-     JOIN roles r ON r.id = u.id_role
-     ORDER BY u.name ASC`
-  );
+  try {
+    const result = await pool.query(`
+      SELECT u.id, u.name, u.username, u.no_hp, u.foto_profil, u.status,
+             u.id_role, r.name AS role_name, u.id_kelas
+      FROM users u
+      JOIN roles r ON r.id = u.id_role
+      ORDER BY u.name ASC
+    `);
 
-  res.json(result.rows);
-};
-
-/* =======================
-   GET USER BY ID
-======================= */
-exports.getUserById = async (req, res) => {
-  const result = await pool.query(
-    `SELECT id, name, username, id_role, id_kelas
-     FROM users
-     WHERE id = $1`,
-    [req.params.id]
-  );
-
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'User tidak ditemukan' });
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  res.json(result.rows[0]);
 };
 
 /* =======================
-   UPDATE USER
+   GET USER PROFILE (SELF)
+   Any authenticated user can get their own profile
+======================= */
+exports.getUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.username, u.no_hp, u.foto_profil, 
+              u.status, u.is_profile_complete, u.id_role, u.id_kelas,
+              r.name AS role
+       FROM users u
+       JOIN roles r ON r.id = u.id_role
+       WHERE u.id = $1`,
+      [userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Profile berhasil dimuat',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   UPDATE USER (ADMIN)
 ======================= */
 exports.updateUser = async (req, res) => {
   try {
-    const { name, username, password, id_role, id_kelas } = req.body;
+    const { name, username, password, id_role, id_kelas, status } = req.body;
     const { id } = req.params;
 
     if (!name || !username || !id_role) {
       return res.status(400).json({ message: 'Data tidak lengkap' });
-    }
-
-    if (id_role === 2 && !id_kelas) {
-      return res.status(400).json({ message: 'KM wajib punya kelas' });
-    }
-
-    if (id_role !== 2 && id_kelas) {
-      return res.status(400).json({ message: 'Role ini tidak boleh punya kelas' });
-    }
-
-    const cekUsername = await pool.query(
-      `SELECT id FROM users WHERE username = $1 AND id != $2`,
-      [username, id]
-    );
-
-    if (cekUsername.rowCount > 0) {
-      return res.status(400).json({ message: 'Username sudah dipakai' });
     }
 
     let query = `
@@ -110,25 +114,22 @@ exports.updateUser = async (req, res) => {
       SET name = $1,
           username = $2,
           id_role = $3,
-          id_kelas = $4
+          id_kelas = $4,
+          status = $5,
+          updated_at = CURRENT_TIMESTAMP
     `;
-    const values = [name, username, id_role, id_kelas || null];
+    const values = [name, username, id_role, id_kelas || null, status];
 
     if (password) {
       const hashed = await bcrypt.hash(password, 10);
-      query += `, password = $5 WHERE id = $6`;
+      query += `, password = $6 WHERE id = $7`;
       values.push(hashed, id);
     } else {
-      query += ` WHERE id = $5`;
+      query += ` WHERE id = $6`;
       values.push(id);
     }
 
-    const result = await pool.query(query, values);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'User tidak ditemukan' });
-    }
-
+    await pool.query(query, values);
     res.json({ message: 'User berhasil diupdate' });
   } catch (err) {
     console.error(err);
@@ -137,17 +138,50 @@ exports.updateUser = async (req, res) => {
 };
 
 /* =======================
-   DELETE USER
+   DELETE USER (ADMIN)
 ======================= */
 exports.deleteUser = async (req, res) => {
-  const result = await pool.query(
-    `DELETE FROM users WHERE id = $1`,
-    [req.params.id]
-  );
-
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'User tidak ditemukan' });
+  try {
+    await pool.query(`DELETE FROM users WHERE id = $1`, [req.params.id]);
+    res.json({ message: 'User berhasil dihapus' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
+};
 
-  res.json({ message: 'User berhasil dihapus' });
+/* =======================
+   UPDATE PROFILE (SELF - ALL ROLES)
+   ✅ Any authenticated user can update their own profile
+======================= */
+// controllers/user.controller.js
+exports.updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { no_hp } = req.body;
+
+    let fotoProfilUrl = null;
+    if (req.file) {  // ✅ Multer puts file here when field name matches
+      fotoProfilUrl = await uploadImage(req.file, 'profile');
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET no_hp = COALESCE($1, no_hp),
+           foto_profil = COALESCE($2, foto_profil),
+           is_profile_complete = true,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING id, name, username, no_hp, foto_profil, is_profile_complete`,
+      [no_hp || null, fotoProfilUrl, userId]
+    );
+
+    res.json({
+      message: 'Profil berhasil diperbarui',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
