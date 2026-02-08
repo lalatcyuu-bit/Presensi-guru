@@ -7,7 +7,8 @@ app.use(cors({
   origin: [
     'https://bv8mb4zp-3000.asse.devtunnels.ms',
     'http://localhost:3000',
-    'https://bgdr3s45-3000.asse.devtunnels.ms'
+    'https://bgdr3s45-3000.asse.devtunnels.ms',
+    'http://192.168.100.22:3000'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

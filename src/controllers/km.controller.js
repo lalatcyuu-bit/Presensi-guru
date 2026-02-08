@@ -18,6 +18,10 @@ exports.getJadwalKelasHariIni = async (req, res) => {
         const hariIni = hariMap[new Date().getDay()];
         const tanggalHariIni = new Date().toISOString().split('T')[0];
 
+        // Waktu server saat ini
+        const now = new Date();
+        const currentTime = now.toTimeString().split(' ')[0]; // HH:MM:SS
+
         const result = await pool.query(
             `SELECT 
                 j.id_jadwal,
@@ -64,6 +68,19 @@ exports.getJadwalKelasHariIni = async (req, res) => {
                 statusFE = row.status_approve;
             }
 
+            // Tentukan status waktu
+            let timeStatus;
+            const jamMulaiTime = row.jam_mulai;
+            const jamSelesaiTime = row.jam_selesai;
+
+            if (currentTime < jamMulaiTime) {
+                timeStatus = 'belum_dimulai';
+            } else if (currentTime >= jamMulaiTime && currentTime <= jamSelesaiTime) {
+                timeStatus = 'sedang_berlangsung';
+            } else {
+                timeStatus = 'sudah_selesai';
+            }
+
             return {
                 id: row.id_jadwal,
                 timeRange: `${jamMulai} – ${jamSelesai}`,
@@ -72,6 +89,9 @@ exports.getJadwalKelasHariIni = async (req, res) => {
                 teacher: namaGuru,
                 status: statusFE,
                 status_approve: row.status_approve || null,
+                timeStatus: timeStatus,
+                jam_mulai: jamMulaiTime,
+                jam_selesai: jamSelesaiTime,
                 kelas: {
                     name: row.kelas_name,
                     tingkat: row.tingkat,
@@ -90,6 +110,8 @@ exports.getJadwalKelasHariIni = async (req, res) => {
         res.json({
             tanggal: tanggalHariIni,
             hari: hariIni,
+            serverTime: currentTime,
+            serverDateTime: now.toISOString(),
             kelas: result.rows.length > 0 ? {
                 name: result.rows[0].kelas_name,
                 tingkat: result.rows[0].tingkat,
@@ -141,11 +163,29 @@ exports.getJadwalById = async (req, res) => {
         const namaGuru = guruData.nama_guru || 'N/A';
         const namaMapel = guruData.mapel?.nama_mapel || 'N/A';
 
+        // Waktu server saat ini
+        const now = new Date();
+        const currentTime = now.toTimeString().split(' ')[0];
+
+        // Tentukan status waktu
+        let timeStatus;
+        if (currentTime < row.jam_mulai) {
+            timeStatus = 'belum_dimulai';
+        } else if (currentTime >= row.jam_mulai && currentTime <= row.jam_selesai) {
+            timeStatus = 'sedang_berlangsung';
+        } else {
+            timeStatus = 'sudah_selesai';
+        }
+
         res.json({
             id_jadwal: row.id_jadwal,
             namaMapel: namaMapel,
             namaGuru: namaGuru,
             jamPelajaran: `${jamMulai} – ${jamSelesai}`,
+            timeStatus: timeStatus,
+            jam_mulai: row.jam_mulai,
+            jam_selesai: row.jam_selesai,
+            serverTime: currentTime,
             kelas: {
                 name: row.kelas_name,
                 tingkat: row.tingkat,
@@ -180,6 +220,28 @@ exports.createPresensiByKM = async (req, res) => {
             return res.status(400).json({ message: 'Data tidak lengkap' });
         }
 
+        // Cek jadwal dan waktu
+        const jadwalResult = await pool.query(
+            `SELECT jam_mulai, jam_selesai FROM jadwal WHERE id_jadwal = $1`,
+            [id_jadwal]
+        );
+
+        if (jadwalResult.rowCount === 0) {
+            return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+        }
+
+        const { jam_mulai, jam_selesai } = jadwalResult.rows[0];
+        const currentTime = new Date().toTimeString().split(' ')[0];
+
+        // Validasi waktu - hanya bisa presensi saat jam pelajaran berlangsung
+        if (currentTime < jam_mulai) {
+            return res.status(400).json({ message: 'Belum waktunya presensi. Jam pelajaran belum dimulai.' });
+        }
+
+        if (currentTime > jam_selesai) {
+            return res.status(400).json({ message: 'Waktu presensi sudah lewat. Jam pelajaran sudah selesai.' });
+        }
+
         // Validasi foto wajib untuk status Hadir
         if (status === 'Hadir' && !req.file) {
             return res.status(400).json({ message: 'Foto bukti wajib untuk status Hadir' });
@@ -190,13 +252,11 @@ exports.createPresensiByKM = async (req, res) => {
             return res.status(400).json({ message: 'Status tugas wajib untuk Tidak Hadir' });
         }
 
-        // Upload foto jika ada
         let fotoLink = null;
         if (req.file) {
             fotoLink = await uploadToDrive(req.file);
         }
 
-        // Convert memberikan_tugas dari string ke boolean
         const memberikanTugasBoolean = memberikan_tugas === 'ya' ? true :
             memberikan_tugas === 'tidak' ? false : null;
 
