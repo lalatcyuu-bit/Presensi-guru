@@ -7,7 +7,9 @@ const jadwalController = require('../controllers/jadwal.controller');
 
 router.post('/', auth, role.onlyAdmin, jadwalController.createJadwal);
 router.get('/', auth, role.onlyAdmin, jadwalController.getJadwal);
+router.get('/kelas', auth, jadwalController.getJadwalByKelas);
 router.get('/:id', auth, role.onlyAdmin, jadwalController.getJadwalById);
 router.put('/:id', auth, role.onlyAdmin, jadwalController.updateJadwal);
 router.delete('/:id', auth, role.onlyAdmin, jadwalController.deleteJadwal);
+
 module.exports = router;

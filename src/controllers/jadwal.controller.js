@@ -281,3 +281,29 @@ exports.deleteJadwal = async (req, res) => {
   res.json({ message: 'Jadwal berhasil dihapus' });
 };
 
+// GET jadwal berdasarkan kelas (dari token)
+exports.getJadwalByKelas = async (req, res) => {
+  try {
+    // 🔒 validasi auth dulu
+    if (!req.user || !req.user.id_kelas) {
+      return res.status(401).json({
+        message: 'Token tidak valid atau id_kelas tidak ditemukan'
+      });
+    }
+
+    const id_kelas = req.user.id_kelas;
+
+    const result = await pool.query(
+      `SELECT *
+       FROM jadwal
+       WHERE id_kelas = $1
+       ORDER BY hari, jam_mulai`,
+      [id_kelas]
+    );
+
+    return res.status(200).json(result.rows); // kosong pun tetap 200
+  } catch (error) {
+    console.error('GET JADWAL BY KELAS ERROR:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
