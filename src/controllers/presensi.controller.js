@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { uploadImage } = require('../utils/cloudinary');
+const { uploadImage, deleteImage, getPublicIdFromUrl } = require('../utils/cloudinary');
 
 /* =======================
    CREATE PRESENSI
@@ -74,21 +74,49 @@ exports.getPresensiById = async (req, res) => {
 exports.updatePresensi = async (req, res) => {
   try {
     const { status, catatan } = req.body;
+    const idPresensi = req.params.id;
 
+    // 1️⃣ ambil data lama
+    const oldData = await pool.query(
+      `SELECT foto_bukti FROM presensi_guru WHERE id_presensi = $1`,
+      [idPresensi]
+    );
+
+    if (!oldData.rowCount) {
+      return res.status(404).json({ message: 'Presensi tidak ditemukan' });
+    }
+
+    let fotoBaru = null;
+
+    // 2️⃣ kalau upload foto baru
+    if (req.file) {
+      // hapus foto lama
+      const fotoLama = oldData.rows[0].foto_bukti;
+      if (fotoLama) {
+        const publicId = getPublicIdFromUrl(fotoLama);
+        await deleteImage(publicId);
+      }
+
+      // upload foto baru
+      fotoBaru = await uploadImage(req.file, 'presensi');
+    }
+
+    // 3️⃣ update DB
     const result = await pool.query(
       `UPDATE presensi_guru
-       SET status = $1,
-           catatan = $2,
+       SET status = COALESCE($1, status),
+           catatan = COALESCE($2, catatan),
+           foto_bukti = COALESCE($3, foto_bukti),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id_presensi = $3
+       WHERE id_presensi = $4
          AND status_approve = 'Pending'
        RETURNING *`,
-      [status, catatan || null, req.params.id]
+      [status, catatan || null, fotoBaru, idPresensi]
     );
 
     if (!result.rowCount) {
       return res.status(400).json({
-        message: 'Presensi sudah di-approve atau tidak ditemukan'
+        message: 'Presensi sudah di-approve atau tidak bisa diupdate'
       });
     }
 

@@ -18,5 +18,6 @@ CREATE TABLE users (
         ON DELETE SET NULL
 );
 
-INSERT INTO users (name, username, password, id_role, id_kelas) VALUES
-('Adit', 'adit', 'semuasama', 1, 1)
+ALTER TABLE users
+ADD COLUMN no_hp VARCHAR(20);
+ADD COLUMN foto_profil TEXT; 

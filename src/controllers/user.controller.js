@@ -1,9 +1,14 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
-const { uploadImage } = require('../utils/cloudinary');
+const {
+  uploadImage,
+  getPublicIdFromUrl,
+  deleteImage
+} = require('../utils/cloudinary');
+
 
 /* =======================
-   CREATE USER (ADMIN)
+    CREATE USER (ADMIN)
 ======================= */
 exports.createUser = async (req, res) => {
   try {
@@ -46,7 +51,7 @@ exports.createUser = async (req, res) => {
 };
 
 /* =======================
-   GET ALL USERS (ADMIN)
+    GET ALL USERS (ADMIN)
 ======================= */
 exports.getUsers = async (req, res) => {
   try {
@@ -66,8 +71,8 @@ exports.getUsers = async (req, res) => {
 };
 
 /* =======================
-   GET USER PROFILE (SELF)
-   Any authenticated user can get their own profile
+    GET USER PROFILE (SELF)
+    Any authenticated user can get their own profile
 ======================= */
 exports.getUserProfile = async (req, res) => {
   try {
@@ -98,7 +103,7 @@ exports.getUserProfile = async (req, res) => {
 };
 
 /* =======================
-   UPDATE USER (ADMIN)
+    UPDATE USER (ADMIN)
 ======================= */
 exports.updateUser = async (req, res) => {
   try {
@@ -138,7 +143,7 @@ exports.updateUser = async (req, res) => {
 };
 
 /* =======================
-   DELETE USER (ADMIN)
+    DELETE USER (ADMIN)
 ======================= */
 exports.deleteUser = async (req, res) => {
   try {
@@ -151,20 +156,38 @@ exports.deleteUser = async (req, res) => {
 };
 
 /* =======================
-   UPDATE PROFILE (SELF - ALL ROLES)
-   ✅ Any authenticated user can update their own profile
+    UPDATE PROFILE (SELF - ALL ROLES)
 ======================= */
-// controllers/user.controller.js
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const { no_hp } = req.body;
 
-    let fotoProfilUrl = null;
-    if (req.file) {  // ✅ Multer puts file here when field name matches
-      fotoProfilUrl = await uploadImage(req.file, 'profile');
+    // 1️⃣ ambil foto lama
+    const oldData = await pool.query(
+      `SELECT foto_profil FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (!oldData.rowCount) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
     }
 
+    let fotoProfilBaru = null;
+
+    // 2️⃣ kalau upload foto baru
+    if (req.file) {
+      const fotoLama = oldData.rows[0].foto_profil;
+
+      if (fotoLama) {
+        const publicId = getPublicIdFromUrl(fotoLama);
+        await deleteImage(publicId);
+      }
+
+      fotoProfilBaru = await uploadImage(req.file, 'profile');
+    }
+
+    // 3️⃣ update DB
     const result = await pool.query(
       `UPDATE users
        SET no_hp = COALESCE($1, no_hp),
@@ -173,7 +196,7 @@ exports.updateProfile = async (req, res) => {
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $3
        RETURNING id, name, username, no_hp, foto_profil, is_profile_complete`,
-      [no_hp || null, fotoProfilUrl, userId]
+      [no_hp || null, fotoProfilBaru, userId]
     );
 
     res.json({
