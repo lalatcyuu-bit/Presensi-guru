@@ -2,11 +2,11 @@ const pool = require('../db');
 const { uploadImage, deleteImage, getPublicIdFromUrl } = require('../utils/cloudinary');
 
 /* =======================
-   CREATE PRESENSI
+   CREATE PRESENSI (ADMIN)
 ======================= */
 exports.createPresensi = async (req, res) => {
   try {
-    const { id_jadwal, status, diabsen_oleh, catatan } = req.body;
+    const { id_jadwal, status, diabsen_oleh, memberikan_tugas, catatan } = req.body;
 
     if (!req.file) {
       return res.status(400).json({ message: 'Foto wajib diupload' });
@@ -16,10 +16,10 @@ exports.createPresensi = async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO presensi_guru
-       (id_jadwal, status, foto_bukti, diabsen_oleh, catatan)
-       VALUES ($1, $2, $3, $4, $5)
+       (id_jadwal, status, foto_bukti, diabsen_oleh, memberikan_tugas, catatan)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [id_jadwal, status, fotoLink, diabsen_oleh, catatan || null]
+      [id_jadwal, status, fotoLink, diabsen_oleh, memberikan_tugas || null, catatan || null]
     );
 
     res.status(201).json(result.rows[0]);
@@ -30,7 +30,7 @@ exports.createPresensi = async (req, res) => {
 };
 
 /* =======================
-   GET ALL
+   GET ALL (dengan join detail)
 ======================= */
 exports.getPresensi = async (req, res) => {
   try {

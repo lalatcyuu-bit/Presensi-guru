@@ -4,8 +4,13 @@ const app = express();
 const cors = require('cors');
 
 app.use(cors({
-  origin: 'http://localhost:3000',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: [
+    'https://bv8mb4zp-3000.asse.devtunnels.ms',
+    'http://localhost:3000',
+    'https://bgdr3s45-3000.asse.devtunnels.ms',
+    'http://192.168.100.22:3000'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
@@ -18,9 +23,8 @@ app.use('/guru', require('./routes/guru.routes'));
 app.use('/mapel', require('./routes/mapel.routes'));
 app.use('/jadwal', require('./routes/jadwal.routes'));
 app.use('/presensi', require('./routes/presensi.routes'));
-
-
-
+app.use('/kelas', require('./routes/kelas.routes'));
+app.use('/km', require('./routes/km.routes'));
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {

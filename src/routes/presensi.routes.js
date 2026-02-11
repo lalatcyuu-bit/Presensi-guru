@@ -19,4 +19,7 @@ router.put('/:id', auth, role.onlyAdmin, controller.updatePresensi);
 router.put('/:id/approve', auth, role.onlyPiket, controller.approvePresensi);
 router.delete('/:id', auth, role.onlyAdmin, controller.deletePresensi);
 
+// Approve routes (bisa admin atau piket, sesuaikan)
+router.put('/:id/approve', auth, role.onlyAdmin, controller.approvePresensi);
+
 module.exports = router;

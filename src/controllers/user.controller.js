@@ -54,19 +54,57 @@ exports.createUser = async (req, res) => {
     GET ALL USERS (ADMIN)
 ======================= */
 exports.getUsers = async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT u.id, u.name, u.username, u.no_hp, u.foto_profil, u.status,
-             u.id_role, r.name AS role_name, u.id_kelas
-      FROM users u
-      JOIN roles r ON r.id = u.id_role
-      ORDER BY u.name ASC
-    `);
+  const result = await pool.query(
+    `SELECT 
+       u.id, 
+       u.name, 
+       u.username, 
+       u.id_role, 
+       u.id_kelas, 
+       r.name AS role_name,
+       k.id AS kelas_id,
+       k.name AS kelas_name,
+       k.tingkat AS kelas_tingkat,
+       k.jurusan AS kelas_jurusan
+     FROM users u
+     JOIN roles r ON r.id = u.id_role
+     LEFT JOIN kelas k ON k.id = u.id_kelas
+     ORDER BY u.name ASC`
+  );
 
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+  const formattedData = result.rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    username: row.username,
+    id_role: row.id_role,
+    id_kelas: row.id_kelas,
+    role: {
+      name: row.role_name
+    },
+    kelas: row.kelas_id ? {
+      id: row.kelas_id,
+      name: row.kelas_name,
+      tingkat: row.kelas_tingkat,
+      jurusan: row.kelas_jurusan
+    } : null
+  }));
+
+  res.json(formattedData);
+};
+
+/* =======================
+   GET USER BY ID
+======================= */
+exports.getUserById = async (req, res) => {
+  const result = await pool.query(
+    `SELECT id, name, username, id_role, id_kelas
+     FROM users
+     WHERE id = $1`,
+    [req.params.id]
+  );
+
+  if (result.rowCount === 0) {
+    return res.status(404).json({ message: 'User tidak ditemukan' });
   }
 };
 
