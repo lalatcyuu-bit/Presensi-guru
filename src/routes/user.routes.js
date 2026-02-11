@@ -9,11 +9,11 @@ const controller = require('../controllers/user.controller');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ⭐ IMPORTANT: Specific routes BEFORE parameterized routes
+
 router.get('/profile', auth, controller.getUserProfile);
 router.put('/profile', auth, upload.single('foto_profil'), controller.updateProfile);
 
-// Admin routes
+
 router.post('/', auth, role.onlyAdmin, controller.createUser);
 router.get('/', auth, role.onlyAdmin, controller.getUsers);
 router.put('/:id', auth, role.onlyAdmin, controller.updateUser);
