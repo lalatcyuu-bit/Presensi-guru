@@ -7,9 +7,6 @@ const {
 } = require('../utils/cloudinary');
 
 
-/* =======================
-    CREATE USER (ADMIN)
-======================= */
 exports.createUser = async (req, res) => {
   try {
     const { name, username, password, id_role, id_kelas } = req.body;
@@ -50,9 +47,6 @@ exports.createUser = async (req, res) => {
   }
 };
 
-/* =======================
-    GET ALL USERS (ADMIN)
-======================= */
 exports.getUsers = async (req, res) => {
   const result = await pool.query(
     `SELECT 
@@ -92,9 +86,6 @@ exports.getUsers = async (req, res) => {
   res.json(formattedData);
 };
 
-/* =======================
-   GET USER BY ID
-======================= */
 exports.getUserById = async (req, res) => {
   const result = await pool.query(
     `SELECT id, name, username, id_role, id_kelas
@@ -110,10 +101,6 @@ exports.getUserById = async (req, res) => {
   res.json(result.rows[0]);
 };
 
-/* =======================
-    GET USER PROFILE (SELF)
-    Any authenticated user can get their own profile
-======================= */
 exports.getUserProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -142,9 +129,6 @@ exports.getUserProfile = async (req, res) => {
   }
 };
 
-/* =======================
-    UPDATE USER (ADMIN)
-======================= */
 exports.updateUser = async (req, res) => {
   try {
     const { name, username, password, id_role, id_kelas, status } = req.body;
@@ -182,9 +166,6 @@ exports.updateUser = async (req, res) => {
   }
 };
 
-/* =======================
-    DELETE USER (ADMIN)
-======================= */
 exports.deleteUser = async (req, res) => {
   try {
     await pool.query(`DELETE FROM users WHERE id = $1`, [req.params.id]);
@@ -195,15 +176,11 @@ exports.deleteUser = async (req, res) => {
   }
 };
 
-/* =======================
-    UPDATE PROFILE (SELF - ALL ROLES)
-======================= */
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const { no_hp } = req.body;
 
-    // 1️⃣ ambil foto lama
     const oldData = await pool.query(
       `SELECT foto_profil FROM users WHERE id = $1`,
       [userId]
@@ -215,7 +192,6 @@ exports.updateProfile = async (req, res) => {
 
     let fotoProfilBaru = null;
 
-    // 2️⃣ kalau upload foto baru
     if (req.file) {
       const fotoLama = oldData.rows[0].foto_profil;
 
@@ -227,7 +203,6 @@ exports.updateProfile = async (req, res) => {
       fotoProfilBaru = await uploadImage(req.file, 'profile');
     }
 
-    // 3️⃣ update DB
     const result = await pool.query(
       `UPDATE users
        SET no_hp = COALESCE($1, no_hp),
