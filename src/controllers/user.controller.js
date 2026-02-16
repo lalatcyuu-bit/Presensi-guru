@@ -1,10 +1,10 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
-const {
-  uploadImage,
-  getPublicIdFromUrl,
-  deleteImage
-} = require('../utils/cloudinary');
+// const {
+//   uploadImage,
+//   getPublicIdFromUrl,
+//   deleteImage
+// } = require('../utils/cloudinary');
 
 
 exports.createUser = async (req, res) => {
@@ -101,33 +101,33 @@ exports.getUserById = async (req, res) => {
   res.json(result.rows[0]);
 };
 
-exports.getUserProfile = async (req, res) => {
-  try {
-    const userId = req.user.id;
+// exports.getUserProfile = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
 
-    const result = await pool.query(
-      `SELECT u.id, u.name, u.username, u.no_hp, u.foto_profil, 
-              u.status, u.is_profile_complete, u.id_role, u.id_kelas,
-              r.name AS role
-       FROM users u
-       JOIN roles r ON r.id = u.id_role
-       WHERE u.id = $1`,
-      [userId]
-    );
+//     const result = await pool.query(
+//       `SELECT u.id, u.name, u.username, u.no_hp, u.foto_profil, 
+//               u.status, u.is_profile_complete, u.id_role, u.id_kelas,
+//               r.name AS role
+//        FROM users u
+//        JOIN roles r ON r.id = u.id_role
+//        WHERE u.id = $1`,
+//       [userId]
+//     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'User tidak ditemukan' });
-    }
+//     if (result.rowCount === 0) {
+//       return res.status(404).json({ message: 'User tidak ditemukan' });
+//     }
 
-    res.json({
-      message: 'Profile berhasil dimuat',
-      data: result.rows[0]
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
+//     res.json({
+//       message: 'Profile berhasil dimuat',
+//       data: result.rows[0]
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: 'Server error' });
+//   }
+// };
 
 exports.updateUser = async (req, res) => {
   try {
@@ -176,50 +176,50 @@ exports.deleteUser = async (req, res) => {
   }
 };
 
-exports.updateProfile = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { no_hp } = req.body;
+// exports.updateProfile = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+//     const { no_hp } = req.body;
 
-    const oldData = await pool.query(
-      `SELECT foto_profil FROM users WHERE id = $1`,
-      [userId]
-    );
+//     const oldData = await pool.query(
+//       `SELECT foto_profil FROM users WHERE id = $1`,
+//       [userId]
+//     );
 
-    if (!oldData.rowCount) {
-      return res.status(404).json({ message: 'User tidak ditemukan' });
-    }
+//     if (!oldData.rowCount) {
+//       return res.status(404).json({ message: 'User tidak ditemukan' });
+//     }
 
-    let fotoProfilBaru = null;
+//     let fotoProfilBaru = null;
 
-    if (req.file) {
-      const fotoLama = oldData.rows[0].foto_profil;
+//     if (req.file) {
+//       const fotoLama = oldData.rows[0].foto_profil;
 
-      if (fotoLama) {
-        const publicId = getPublicIdFromUrl(fotoLama);
-        await deleteImage(publicId);
-      }
+//       if (fotoLama) {
+//         const publicId = getPublicIdFromUrl(fotoLama);
+//         await deleteImage(publicId);
+//       }
 
-      fotoProfilBaru = await uploadImage(req.file, 'profile');
-    }
+//       fotoProfilBaru = await uploadImage(req.file, 'profile');
+//     }
 
-    const result = await pool.query(
-      `UPDATE users
-       SET no_hp = COALESCE($1, no_hp),
-           foto_profil = COALESCE($2, foto_profil),
-           is_profile_complete = true,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $3
-       RETURNING id, name, username, no_hp, foto_profil, is_profile_complete`,
-      [no_hp || null, fotoProfilBaru, userId]
-    );
+//     const result = await pool.query(
+//       `UPDATE users
+//        SET no_hp = COALESCE($1, no_hp),
+//            foto_profil = COALESCE($2, foto_profil),
+//            is_profile_complete = true,
+//            updated_at = CURRENT_TIMESTAMP
+//        WHERE id = $3
+//        RETURNING id, name, username, no_hp, foto_profil, is_profile_complete`,
+//       [no_hp || null, fotoProfilBaru, userId]
+//     );
 
-    res.json({
-      message: 'Profil berhasil diperbarui',
-      data: result.rows[0]
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
+//     res.json({
+//       message: 'Profil berhasil diperbarui',
+//       data: result.rows[0]
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: 'Server error' });
+//   }
+// };
