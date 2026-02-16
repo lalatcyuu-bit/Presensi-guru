@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS presensi_guru (
     id_jadwal INTEGER NOT NULL,
     tanggal DATE DEFAULT CURRENT_DATE,
     status VARCHAR(20) NOT NULL,
-    foto_bukti TEXT NOT NULL,
+    foto_bukti TEXT,
     diabsen_oleh INTEGER NOT NULL,
     memberikan_tugas BOOLEAN,
     catatan TEXT,
