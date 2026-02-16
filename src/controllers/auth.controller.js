@@ -53,3 +53,34 @@ exports.login = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+exports.getCurrentUser = async (req, res) => {
+  try {
+    // req.user.id sudah di-set oleh auth middleware
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.id_kelas, r.name AS role
+       FROM users u
+       JOIN roles r ON u.id_role = r.id
+       WHERE u.id = $1`,
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
+    const user = result.rows[0];
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        id_kelas: user.id_kelas,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};

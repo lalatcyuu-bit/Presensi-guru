@@ -35,18 +35,18 @@ router.post(
 );
 
 // Get all presensi
-router.get('/', auth, role.onlyAdmin, controller.getPresensi);
+router.get('/', auth, role.onlyPiketOrAdmin, controller.getPresensi);
 
 // Get presensi by ID
-router.get('/:id', auth, role.onlyAdmin, controller.getPresensiById);
+router.get('/:id', auth, role.onlyPiketOrAdmin, controller.getPresensiById);
 
 // Update presensi (Admin)
-router.put('/:id', auth, role.onlyAdmin, upload.single('foto_bukti'), controller.updatePresensi);
+router.put('/:id', auth, role.onlyPiketOrAdmin, upload.single('foto_bukti'), controller.updatePresensi);
 
 // Approve presensi (Piket atau Admin)
 router.put('/:id/approve', auth, role.onlyPiketOrAdmin, controller.approvePresensi);
 
 // Delete presensi (Admin)
-router.delete('/:id', auth, role.onlyAdmin, controller.deletePresensi);
+router.delete('/:id', auth, role.onlyPiketOrAdmin, controller.deletePresensi);
 
 module.exports = router;
