@@ -98,7 +98,7 @@ exports.getJadwal = async (req, res) => {
         j.jam_mulai,
         j.jam_selesai,
         j.guru,
-        k.nama_kelas
+        k.name AS nama_kelas
       FROM jadwal j
       JOIN kelas k ON k.id = j.id_kelas
       ORDER BY j.hari, j.jam_mulai

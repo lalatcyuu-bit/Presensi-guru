@@ -1,25 +1,52 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 
 const auth = require('../middleware/auth.middleware');
 const role = require('../middleware/role.middleware');
 const controller = require('../controllers/presensi.controller');
-const { uploadFotoBukti } = require('../middleware/upload.middleware');
 
+// Setup multer untuk upload
+const upload = multer({ storage: multer.memoryStorage() });
+
+// ============================================
+// KM ROUTES - HAPUS PREFIX /km ✅
+// ============================================
+
+// Get jadwal kelas hari ini (untuk list presensi)
+router.get('/jadwal/today', auth, role.onlyKM, controller.getJadwalKelasHariIni);
+
+// Get detail jadwal by ID (untuk data readonly di form)
+router.get('/jadwal/:id_jadwal', auth, role.onlyKM, controller.getJadwalByIdKM);
+
+// Create presensi oleh KM
+router.post('/presensi', auth, role.onlyKM, upload.single('foto'), controller.createPresensiByKM);
+
+// ============================================
+// ADMIN/PIKET ROUTES (tetap pakai / karena di-mount di /presensi)
+// ============================================
+
+// Create presensi (Admin)
 router.post(
   '/',
   auth,
-  uploadFotoBukti.single('foto_bukti'),
+  upload.single('foto_bukti'),
   controller.createPresensi
 );
 
+// Get all presensi
 router.get('/', auth, role.onlyAdmin, controller.getPresensi);
-router.get('/:id', auth, role.onlyAdmin, controller.getPresensiById);
-router.put('/:id', auth, role.onlyAdmin, controller.updatePresensi);
-router.put('/:id/approve', auth, role.onlyPiket, controller.approvePresensi);
-router.delete('/:id', auth, role.onlyAdmin, controller.deletePresensi);
 
-// Approve routes (bisa admin atau piket, sesuaikan)
-router.put('/:id/approve', auth, role.onlyAdmin, controller.approvePresensi);
+// Get presensi by ID
+router.get('/:id', auth, role.onlyAdmin, controller.getPresensiById);
+
+// Update presensi (Admin)
+router.put('/:id', auth, role.onlyAdmin, upload.single('foto_bukti'), controller.updatePresensi);
+
+// Approve presensi (Piket atau Admin)
+router.put('/:id/approve', auth, role.onlyPiketOrAdmin, controller.approvePresensi);
+
+// Delete presensi (Admin)
+router.delete('/:id', auth, role.onlyAdmin, controller.deletePresensi);
 
 module.exports = router;

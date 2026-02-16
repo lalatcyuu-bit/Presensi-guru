@@ -106,6 +106,8 @@ exports.getUserById = async (req, res) => {
   if (result.rowCount === 0) {
     return res.status(404).json({ message: 'User tidak ditemukan' });
   }
+
+  res.json(result.rows[0]);
 };
 
 /* =======================
