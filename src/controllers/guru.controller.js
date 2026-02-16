@@ -1,8 +1,5 @@
 const pool = require('../db');
 
-/* =======================
-   HELPER QUERY (JOIN MAPEL)
-======================= */
 const guruWithMapelQuery = `
 SELECT 
   g.id_guru,
@@ -25,9 +22,6 @@ LEFT JOIN mapel m
 GROUP BY g.id_guru
 `;
 
-/* =======================
-   CREATE GURU
-======================= */
 exports.createGuru = async (req, res) => {
   const { nama_guru, nip, mapel } = req.body;
 
@@ -35,7 +29,6 @@ exports.createGuru = async (req, res) => {
     return res.status(400).json({ message: 'nama_guru & mapel wajib diisi' });
   }
 
-  // validasi mapel
   const cek = await pool.query(
     `SELECT id_mapel FROM mapel WHERE id_mapel = ANY($1::int[])`,
     [mapel]
@@ -60,9 +53,6 @@ exports.createGuru = async (req, res) => {
   res.status(201).json(result.rows[0]);
 };
 
-/* =======================
-   GET ALL GURU
-======================= */
 exports.getGuru = async (req, res) => {
   const result = await pool.query(
     guruWithMapelQuery + ` ORDER BY g.nama_guru ASC`
@@ -70,9 +60,6 @@ exports.getGuru = async (req, res) => {
   res.json(result.rows);
 };
 
-/* =======================
-   SEARCH GURU BY MAPEL
-======================= */
 exports.getGuruByMapel = async (req, res) => {
   const id_mapel = parseInt(req.query.id_mapel, 10);
 
@@ -134,9 +121,6 @@ exports.getGuruByMapel = async (req, res) => {
   }
 };
 
-/* =======================
-   UPDATE GURU
-======================= */
 exports.updateGuru = async (req, res) => {
   const { id } = req.params;
   const { nama_guru, nip, mapel } = req.body;
@@ -171,9 +155,6 @@ exports.updateGuru = async (req, res) => {
   res.json(result.rows[0]);
 };
 
-/* =======================
-   DELETE GURU
-======================= */
 exports.deleteGuru = async (req, res) => {
   await pool.query(
     `DELETE FROM guru WHERE id_guru = $1`,
