@@ -54,6 +54,18 @@ exports.getGuru = async (req, res) => {
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
+    const fetchAll = req.query.all === 'true'
+    if (fetchAll) {
+      const result = await pool.query(
+        `${guruWithMapelQuery}
+     ${whereClause}
+     GROUP BY g.id_guru
+     ORDER BY g.id_guru DESC`,
+        params
+      )
+      return res.json({ data: result.rows })
+    }
+
     // Hitung total untuk pagination
     const countResult = await pool.query(
       `SELECT COUNT(DISTINCT g.id_guru) AS total
