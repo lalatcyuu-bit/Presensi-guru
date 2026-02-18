@@ -74,7 +74,7 @@ exports.getGuru = async (req, res) => {
       `${guruWithMapelQuery}
        ${whereClause}
        GROUP BY g.id_guru
-       ORDER BY g.nama_guru ASC
+       ORDER BY g.id_guru DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
       params
     );
@@ -123,6 +123,29 @@ exports.createGuru = async (req, res) => {
   );
 
   res.status(201).json(result.rows[0]);
+};
+
+/* =======================
+   GET GURU BY ID
+======================= */
+exports.getGuruById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      guruWithMapelQuery + ` WHERE g.id_guru = $1 GROUP BY g.id_guru`,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Guru tidak ditemukan' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.getGuruByMapel = async (req, res) => {
