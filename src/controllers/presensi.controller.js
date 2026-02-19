@@ -519,3 +519,151 @@ exports.approvePresensi = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+/* =======================
+   GET RIWAYAT PRESENSI KM
+   hanya untuk KM berdasarkan id_kelas
+======================= */
+exports.getRiwayatPresensiKM = async (req, res) => {
+  try {
+    const { id_kelas } = req.user;
+
+    if (!id_kelas) {
+      return res.status(400).json({
+        message: 'KM tidak memiliki kelas'
+      });
+    }
+
+    // query params
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 10;
+    const status = req.query.status || null;
+    const tanggal = req.query.tanggal || null;
+
+    const offset = (page - 1) * pageSize;
+
+    let where = `WHERE j.id_kelas = $1`;
+    let values = [id_kelas];
+    let index = 2;
+
+    if (status) {
+      where += ` AND p.status_approve = $${index}`;
+      values.push(status);
+      index++;
+    }
+
+    if (tanggal) {
+      where += ` AND DATE(p.tanggal) = $${index}`;
+      values.push(tanggal);
+      index++;
+    }
+
+    // total count
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM presensi_guru p
+      JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      ${where}
+    `;
+
+    const countResult = await pool.query(countQuery, values);
+    const totalData = parseInt(countResult.rows[0].count);
+
+    // main query
+    const dataQuery = `
+      SELECT
+        p.id_presensi,
+        p.tanggal,
+        p.status,
+        p.foto_bukti,
+        p.memberikan_tugas,
+        p.catatan,
+        p.status_approve,
+        p.created_at,
+
+        j.id_jadwal,
+        j.hari,
+        j.jam_mulai,
+        j.jam_selesai,
+        j.guru,
+
+        k.name AS kelas_name,
+        k.tingkat,
+        k.jurusan
+
+      FROM presensi_guru p
+      JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+
+      ${where}
+
+      ORDER BY p.tanggal DESC, j.jam_mulai DESC
+
+      LIMIT $${index}
+      OFFSET $${index + 1}
+    `;
+
+    values.push(pageSize, offset);
+
+    const result = await pool.query(dataQuery, values);
+
+    const formatted = result.rows.map(row => {
+      const guruData = row.guru || {};
+
+      return {
+        id_presensi: row.id_presensi,
+        tanggal: row.tanggal,
+
+        jadwal: {
+          id_jadwal: row.id_jadwal,
+          hari: row.hari,
+          jam_mulai: row.jam_mulai,
+          jam_selesai: row.jam_selesai,
+          mapel: guruData.mapel?.nama_mapel || 'N/A',
+          guru: guruData.nama_guru || 'N/A'
+        },
+
+        presensi: {
+          status: row.status,
+          foto_bukti: row.foto_bukti,
+          memberikan_tugas: row.memberikan_tugas,
+          catatan: row.catatan,
+          status_approve: row.status_approve
+        },
+
+        kelas: {
+          name: row.kelas_name,
+          tingkat: row.tingkat,
+          jurusan: row.jurusan
+        },
+
+        created_at: row.created_at
+      };
+    });
+
+    res.json({
+      message: 'Riwayat presensi berhasil diambil',
+
+      pagination: {
+        page,
+        pageSize,
+        totalData,
+        totalPages: Math.ceil(totalData / pageSize)
+      },
+
+      filters: {
+        status,
+        tanggal
+      },
+
+      data: formatted
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Server error'
+    });
+  }
+};
+
