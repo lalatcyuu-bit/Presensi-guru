@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { uploadToDrive } = require('../utils/gdrive');
+const { uploadImage } = require('../utils/cloudinary');
 
 /* =======================
    GET JADWAL KELAS HARI INI
@@ -254,7 +254,7 @@ exports.createPresensiByKM = async (req, res) => {
 
         let fotoLink = null;
         if (req.file) {
-            fotoLink = await uploadToDrive(req.file);
+            fotoLink = await uploadImage(req.file);
         }
 
         const memberikanTugasBoolean = memberikan_tugas === 'ya' ? true :

@@ -15,6 +15,6 @@ router.get('/jadwal/today', auth, role.onlyKM, controller.getJadwalKelasHariIni)
 router.get('/jadwal/:id_jadwal', auth, role.onlyKM, controller.getJadwalById);
 
 // Create presensi oleh KM
-router.post('/presensi', auth, role.onlyKM, upload.single('foto'), controller.createPresensiByKM);
+router.post('/presensi', auth, upload.single('foto_bukti'), controller.createPresensiByKM);
 
 module.exports = router;
