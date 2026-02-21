@@ -5,6 +5,7 @@ const auth = require('../middleware/auth.middleware');
 const role = require('../middleware/role.middleware');
 const kelasController = require('../controllers/kelas.controller');
 
+router.get('/jurusan', auth, role.onlyAdmin, kelasController.getJurusan);
 router.post('/', auth, role.onlyAdmin, kelasController.createKelas);
 router.get('/', auth, role.onlyPiketOrAdmin, kelasController.getKelas);
 router.get('/:id', auth, role.onlyAdmin, kelasController.getKelasById);

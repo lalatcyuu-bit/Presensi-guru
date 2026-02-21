@@ -55,12 +55,13 @@ exports.getCurrentUser = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.name, u.username, r.name AS role,
-              k.id AS kelas_id, k.name AS kelas_name,
-              k.tingkat AS kelas_tingkat, k.jurusan AS kelas_jurusan
-       FROM users u
-       JOIN roles r ON u.id_role = r.id
-       LEFT JOIN kelas k ON k.id = u.id_kelas
-       WHERE u.id = $1`,
+        k.id AS kelas_id, k.name AS kelas_name,
+        k.tingkat AS kelas_tingkat, j.nama_jurusan AS kelas_jurusan
+ FROM users u
+ JOIN roles r ON u.id_role = r.id
+ LEFT JOIN kelas k ON k.id = u.id_kelas
+ LEFT JOIN jurusan j ON j.id = k.id_jurusan
+ WHERE u.id = $1`,
       [req.user.id]
     );
 

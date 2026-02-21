@@ -106,12 +106,13 @@ exports.getUsers = async (req, res) => {
          u.id_kelas,
          r.name AS role_name,
          k.id   AS kelas_id,
-         k.name AS kelas_name,
-         k.tingkat  AS kelas_tingkat,
-         k.jurusan  AS kelas_jurusan
+         k.name         AS kelas_name,
+         k.tingkat      AS kelas_tingkat,
+         j.nama_jurusan AS kelas_jurusan
        FROM users u
        JOIN roles r ON r.id = u.id_role
        LEFT JOIN kelas k ON k.id = u.id_kelas
+       LEFT JOIN jurusan j ON j.id = k.id_jurusan
        ${whereClause}
        ORDER BY u.id DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,

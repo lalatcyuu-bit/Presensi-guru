@@ -52,7 +52,7 @@ router.put('/:id/approve', auth, role.onlyPiketOrAdmin, controller.approvePresen
 // Delete presensi (Admin)
 router.delete('/:id', auth, role.onlyPiketOrAdmin, controller.deletePresensi);
 
-router.get('/km/riwayat', auth, role.onlyKM, controller.getRiwayatPresensiKM);
+// router.get('/km/riwayat', auth, role.onlyKM, controller.getRiwayatPresensiKM);
 
 
 module.exports = router;
