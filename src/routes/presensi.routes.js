@@ -21,8 +21,11 @@ router.get('/jadwal/:id_jadwal', auth, role.onlyKM, controller.getJadwalByIdKM);
 // Create presensi oleh KM
 router.post('/presensi', auth, role.onlyKM, upload.single('foto'), controller.createPresensiByKM);
 
+// Get presensi by ID untuk KM (dipakai saat resubmit untuk pre-fill data)
+// PENTING: route ini harus SEBELUM /presensi/:id/resubmit agar tidak bentrok
+router.get('/presensi/:id', auth, role.onlyKM, controller.getPresensiByIdKM);
+
 // Resubmit presensi yang ditolak oleh KM
-// PUT /km/presensi/:id/resubmit
 router.put('/presensi/:id/resubmit', auth, role.onlyKM, upload.single('foto'), controller.resubmitPresensiByKM);
 
 // ============================================

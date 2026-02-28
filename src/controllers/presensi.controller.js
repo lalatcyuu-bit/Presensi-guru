@@ -108,7 +108,7 @@ exports.getJadwalKelasHariIni = async (req, res) => {
           status_kehadiran: row.status,
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
-          alasan_reject: row.alasan_reject  // ← baru
+          alasan_reject: row.alasan_reject
         } : null,
         duration: null
       };
@@ -190,6 +190,44 @@ exports.getJadwalByIdKM = async (req, res) => {
 
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   GET PRESENSI BY ID (KM)
+   - Hanya bisa akses presensi milik kelasnya sendiri
+======================= */
+exports.getPresensiByIdKM = async (req, res) => {
+  try {
+    const idPresensi = req.params.id;
+    const { id_kelas } = req.user;
+
+    const result = await pool.query(
+      `SELECT 
+         p.id_presensi,
+         p.id_jadwal,
+         p.tanggal,
+         p.status,
+         p.foto_bukti,
+         p.memberikan_tugas,
+         p.catatan,
+         p.status_approve,
+         p.alasan_reject
+       FROM presensi_guru p
+       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+       WHERE p.id_presensi = $1
+         AND j.id_kelas = $2`,
+      [idPresensi, id_kelas]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ message: 'Presensi tidak ditemukan' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('❌ ERROR getPresensiByIdKM:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -616,7 +654,7 @@ exports.approvePresensi = async (req, res) => {
        RETURNING *`,
       [
         status_approve,
-        status_approve === 'Rejected' ? alasan_reject.trim() : null,  // clear alasan kalau Approved
+        status_approve === 'Rejected' ? alasan_reject.trim() : null,
         approved_by,
         idPresensi
       ]
@@ -776,7 +814,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
           status_approve: row.status_approve,
-          alasan_reject: row.alasan_reject   // ← baru
+          alasan_reject: row.alasan_reject
         } : null,
         kelas: {
           name: row.kelas_name,
