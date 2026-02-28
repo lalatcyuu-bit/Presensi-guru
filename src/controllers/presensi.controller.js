@@ -525,12 +525,19 @@ exports.approvePresensi = async (req, res) => {
 
 /* =======================
    GET RIWAYAT PRESENSI KM
-   hanya untuk KM berdasarkan id_kelas
+   Menampilkan semua slot jadwal (termasuk yang belum dipresensi)
+   berdasarkan id_kelas dari JWT user.
+
    Query params:
    - ?page=      → halaman (default 1)
    - ?limit=     → item per halaman (default 10)
-   - ?status=    → filter status_approve (Pending / Approved / Rejected)
-   - ?tanggal=   → filter tanggal (YYYY-MM-DD)
+   - ?status=    → 'Pending' | 'Approved' | 'Rejected' | 'belum'
+   - ?tanggal=   → filter tanggal spesifik (YYYY-MM-DD)
+   
+   Logika:
+   - Gunakan generate_series untuk generate semua tanggal (default 30 hari terakhir)
+   - JOIN ke jadwal berdasarkan nama hari (CASE DOW)
+   - LEFT JOIN ke presensi_guru → NULL = belum dipresensi
 ======================= */
 exports.getRiwayatPresensiKM = async (req, res) => {
   try {
@@ -542,82 +549,125 @@ exports.getRiwayatPresensiKM = async (req, res) => {
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+    const offset = (page - 1) * limit;
     const status = req.query.status || null;
     const tanggal = req.query.tanggal || null;
-    const offset = (page - 1) * limit;
 
-    const params = [id_kelas];
-    let index = 2;
-    const where = [`j.id_kelas = $1`];
+    // ── params & dynamic query parts ─────────────────────────────
+    const params = [id_kelas]; // $1
 
-    if (status) {
-      where.push(`p.status_approve = $${index}`);
-      params.push(status);
-      index++;
-    }
-
+    // Rentang tanggal untuk generate_series
+    // Kalau ada filter tanggal, generate_series cukup 1 hari itu saja
+    let dateStart, dateEnd;
     if (tanggal) {
-      where.push(`DATE(p.tanggal) = $${index}`);
-      params.push(tanggal);
-      index++;
+      params.push(tanggal);          // $2
+      dateStart = `$${params.length}::date`;
+      dateEnd = `$${params.length}::date`;
+    } else {
+      // Default: 30 hari terakhir s/d hari ini
+      dateStart = `CURRENT_DATE - INTERVAL '30 days'`;
+      dateEnd = `CURRENT_DATE`;
     }
 
-    const whereClause = `WHERE ${where.join(' AND ')}`;
+    // Filter status
+    let statusFilter = '';
+    if (status === 'belum') {
+      statusFilter = `AND p.id_presensi IS NULL`;
+    } else if (status) {
+      params.push(status);
+      statusFilter = `AND p.status_approve = $${params.length}`;
+    }
 
-    // Hitung total + summary hadir/tidak hadir (server-side)
+    // ── CTE: generate semua slot jadwal dalam rentang tanggal ────
+    // CASE EXTRACT(DOW) → mapping nomor hari ke nama hari Indonesia
+    const slotsCTE = `
+      WITH slots AS (
+        SELECT
+          gs::date AS tanggal,
+          j.id_jadwal,
+          j.hari,
+          j.jam_mulai,
+          j.jam_selesai,
+          j.guru,
+          k.name         AS kelas_name,
+          k.tingkat,
+          jr.nama_jurusan AS jurusan
+        FROM generate_series(${dateStart}, ${dateEnd}, '1 day'::interval) gs
+        JOIN jadwal j ON j.id_kelas = $1
+          AND j.hari = CASE EXTRACT(DOW FROM gs::date)
+            WHEN 0 THEN 'Minggu'
+            WHEN 1 THEN 'Senin'
+            WHEN 2 THEN 'Selasa'
+            WHEN 3 THEN 'Rabu'
+            WHEN 4 THEN 'Kamis'
+            WHEN 5 THEN 'Jumat'
+            WHEN 6 THEN 'Sabtu'
+          END
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+      )
+    `;
+
+    // ── Hitung total + summary ────────────────────────────────────
     const countResult = await pool.query(
-      `SELECT
-        COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir,
-        COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir
-       FROM presensi_guru p
-       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-       ${whereClause}`,
+      `${slotsCTE}
+       SELECT
+         COUNT(*)                                             AS total,
+         COUNT(*) FILTER (WHERE p.status = 'Hadir')          AS total_hadir,
+         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')    AS total_tidak_hadir,
+         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)       AS total_belum
+       FROM slots s
+       LEFT JOIN presensi_guru p
+         ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
+       WHERE 1=1 ${statusFilter}`,
       params
     );
+
     const total = parseInt(countResult.rows[0].total, 10);
     const totalHadir = parseInt(countResult.rows[0].total_hadir, 10);
     const totalTidakHadir = parseInt(countResult.rows[0].total_tidak_hadir, 10);
+    const totalBelum = parseInt(countResult.rows[0].total_belum, 10);
     const totalPages = Math.ceil(total / limit);
 
-    // Ambil data
+    // ── Ambil data dengan pagination ──────────────────────────────
     params.push(limit);
-    const limitIndex = index;
+    const limitIdx = params.length;
     params.push(offset);
-    const offsetIndex = index + 1;
+    const offsetIdx = params.length;
 
     const result = await pool.query(
-      `SELECT
-        p.id_presensi,
-        p.tanggal,
-        p.status,
-        p.foto_bukti,
-        p.memberikan_tugas,
-        p.catatan,
-        p.status_approve,
-        p.created_at,
-        j.id_jadwal,
-        j.hari,
-        j.jam_mulai,
-        j.jam_selesai,
-        j.guru,
-        k.name AS kelas_name,
-        k.tingkat,
-        jr.nama_jurusan AS jurusan
-      FROM presensi_guru p
-      JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-      JOIN kelas k ON k.id = j.id_kelas
-      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
-      ${whereClause}
-      ORDER BY p.tanggal DESC, j.jam_mulai DESC
-      LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      `${slotsCTE}
+       SELECT
+         s.tanggal,
+         s.id_jadwal,
+         s.hari,
+         s.jam_mulai,
+         s.jam_selesai,
+         s.guru,
+         s.kelas_name,
+         s.tingkat,
+         s.jurusan,
+         p.id_presensi,
+         p.status,
+         p.foto_bukti,
+         p.memberikan_tugas,
+         p.catatan,
+         p.status_approve,
+         p.created_at
+       FROM slots s
+       LEFT JOIN presensi_guru p
+         ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
+       WHERE 1=1 ${statusFilter}
+       ORDER BY s.tanggal DESC, s.jam_mulai DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params
     );
 
+    // ── Format response ───────────────────────────────────────────
     const formatted = result.rows.map(row => {
       const guruData = row.guru || {};
       return {
-        id_presensi: row.id_presensi,
+        id_presensi: row.id_presensi,   // null = belum dipresensi
         tanggal: row.tanggal,
         jadwal: {
           id_jadwal: row.id_jadwal,
@@ -627,19 +677,20 @@ exports.getRiwayatPresensiKM = async (req, res) => {
           mapel: guruData.mapel?.nama_mapel || 'N/A',
           guru: guruData.nama_guru || 'N/A'
         },
-        presensi: {
+        // null kalau belum dipresensi
+        presensi: row.id_presensi ? {
           status: row.status,
           foto_bukti: row.foto_bukti,
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
           status_approve: row.status_approve
-        },
+        } : null,
         kelas: {
           name: row.kelas_name,
           tingkat: row.tingkat,
           jurusan: row.jurusan
         },
-        created_at: row.created_at
+        created_at: row.created_at   // null kalau belum dipresensi
       };
     });
 
@@ -647,9 +698,10 @@ exports.getRiwayatPresensiKM = async (req, res) => {
       message: 'Riwayat presensi berhasil diambil',
       data: formatted,
       summary: {
-        totalPresensi: total,
+        totalSlot: total,           // semua slot (hadir + tidak hadir + belum)
         totalHadir,
-        totalTidakHadir
+        totalTidakHadir,
+        totalBelum                         // slot yang tidak dipresensi sama sekali
       },
       pagination: {
         page,
@@ -657,14 +709,11 @@ exports.getRiwayatPresensiKM = async (req, res) => {
         totalItems: total,
         totalPages
       },
-      filters: {
-        status,
-        tanggal
-      }
+      filters: { status, tanggal }
     });
 
   } catch (err) {
-    console.error(err);
+    console.error('GET RIWAYAT KM ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
