@@ -714,46 +714,49 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     }
 
     const slotsCTE = `
-  WITH slots AS (
-    SELECT
-      gs::date AS tanggal,
-      j.id_jadwal,
-      j.hari,
-      j.jam_mulai,
-      j.jam_selesai,
-      j.guru,
-      k.name         AS kelas_name,
-      k.tingkat,
-      jr.nama_jurusan AS jurusan
-    FROM generate_series(${dateStart}, ${dateEnd}, '1 day'::interval) gs
-    JOIN jadwal j ON j.id_kelas = $1
-      AND j.hari = CASE EXTRACT(DOW FROM gs::date)
-        WHEN 0 THEN 'Minggu'
-        WHEN 1 THEN 'Senin'
-        WHEN 2 THEN 'Selasa'
-        WHEN 3 THEN 'Rabu'
-        WHEN 4 THEN 'Kamis'
-        WHEN 5 THEN 'Jumat'
-        WHEN 6 THEN 'Sabtu'
-      END
-    JOIN kelas k ON k.id = j.id_kelas
-    LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
-    -- Exclude slot hari ini yang jam selesainya belum lewat
-    WHERE NOT (gs::date = CURRENT_DATE AND j.jam_selesai > (NOW() AT TIME ZONE 'Asia/Jakarta')::time)
-  )
-`;
+      WITH slots AS (
+        SELECT
+          gs::date AS tanggal,
+          j.id_jadwal,
+          j.hari,
+          j.jam_mulai,
+          j.jam_selesai,
+          j.guru,
+          k.name          AS kelas_name,
+          k.tingkat,
+          jr.nama_jurusan AS jurusan
+        FROM generate_series(${dateStart}, ${dateEnd}, '1 day'::interval) gs
+        JOIN jadwal j ON j.id_kelas = $1
+          AND j.hari = CASE EXTRACT(DOW FROM gs::date)
+            WHEN 0 THEN 'Minggu'
+            WHEN 1 THEN 'Senin'
+            WHEN 2 THEN 'Selasa'
+            WHEN 3 THEN 'Rabu'
+            WHEN 4 THEN 'Kamis'
+            WHEN 5 THEN 'Jumat'
+            WHEN 6 THEN 'Sabtu'
+          END
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+      )
+    `;
 
     const countResult = await pool.query(
       `${slotsCTE}
        SELECT
-         COUNT(*)                                             AS total,
-         COUNT(*) FILTER (WHERE p.status = 'Hadir')          AS total_hadir,
-         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')    AS total_tidak_hadir,
-         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)       AS total_belum
+         COUNT(*)                                          AS total,
+         COUNT(*) FILTER (WHERE p.status = 'Hadir')       AS total_hadir,
+         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
+         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)    AS total_belum
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
-       WHERE 1=1 ${statusFilter}`,
+       WHERE NOT (
+         s.tanggal = CURRENT_DATE
+         AND s.jam_selesai > (NOW() AT TIME ZONE 'Asia/Jakarta')::time
+         AND p.id_presensi IS NULL
+       )
+       ${statusFilter}`,
       params
     );
 
@@ -791,7 +794,12 @@ exports.getRiwayatPresensiKM = async (req, res) => {
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
-       WHERE 1=1 ${statusFilter}
+       WHERE NOT (
+         s.tanggal = CURRENT_DATE
+         AND s.jam_selesai > (NOW() AT TIME ZONE 'Asia/Jakarta')::time
+         AND p.id_presensi IS NULL
+       )
+       ${statusFilter}
        ORDER BY s.tanggal DESC, s.jam_mulai DESC
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params
