@@ -107,34 +107,39 @@ exports.getGuru = async (req, res) => {
 };
 
 exports.createGuru = async (req, res) => {
-  const { nama_guru, nip, mapel } = req.body;
+  try {
+    const { nama_guru, nip, mapel } = req.body;
 
-  if (!nama_guru || !Array.isArray(mapel) || mapel.length === 0) {
-    return res.status(400).json({ message: 'nama_guru & mapel wajib diisi' });
+    if (!nama_guru || !Array.isArray(mapel) || mapel.length === 0) {
+      return res.status(400).json({ message: 'nama_guru & mapel wajib diisi' });
+    }
+
+    const cek = await pool.query(
+      `SELECT id_mapel FROM mapel WHERE id_mapel = ANY($1::int[])`,
+      [mapel]
+    );
+
+    if (cek.rowCount !== mapel.length) {
+      return res.status(400).json({ message: 'Mapel tidak valid' });
+    }
+
+    const insert = await pool.query(
+      `INSERT INTO guru (nama_guru, nip, mapel)
+       VALUES ($1, $2, $3)
+       RETURNING id_guru`,
+      [nama_guru, nip || null, JSON.stringify(mapel)]
+    );
+
+    const result = await pool.query(
+      guruWithMapelQuery + ` WHERE g.id_guru = $1 GROUP BY g.id_guru`,
+      [insert.rows[0].id_guru]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  const cek = await pool.query(
-    `SELECT id_mapel FROM mapel WHERE id_mapel = ANY($1::int[])`,
-    [mapel]
-  );
-
-  if (cek.rowCount !== mapel.length) {
-    return res.status(400).json({ message: 'Mapel tidak valid' });
-  }
-
-  const insert = await pool.query(
-    `INSERT INTO guru (nama_guru, nip, mapel)
-     VALUES ($1, $2, $3)
-     RETURNING id_guru`,
-    [nama_guru, nip || null, JSON.stringify(mapel)]
-  );
-
-  const result = await pool.query(
-    guruWithMapelQuery + ` WHERE g.id_guru = $1 GROUP BY g.id_guru`,
-    [insert.rows[0].id_guru]
-  );
-
-  res.status(201).json(result.rows[0]);
 };
 
 /* =======================
@@ -218,6 +223,29 @@ exports.updateGuru = async (req, res) => {
 };
 
 exports.deleteGuru = async (req, res) => {
-  await pool.query(`DELETE FROM guru WHERE id_guru = $1`, [req.params.id]);
-  res.json({ message: 'Guru berhasil dihapus' });
+  try {
+    const cekJadwal = await pool.query(
+      `SELECT 1 FROM jadwal WHERE (guru->>'id_guru')::int = $1 LIMIT 1`,
+      [req.params.id]
+    );
+    if (cekJadwal.rowCount > 0) {
+      return res.status(400).json({
+        message: 'Guru tidak bisa dihapus, masih memiliki jadwal aktif'
+      });
+    }
+
+    const result = await pool.query(
+      `DELETE FROM guru WHERE id_guru = $1`,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Guru tidak ditemukan' });
+    }
+
+    res.json({ message: 'Guru berhasil dihapus' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
 };

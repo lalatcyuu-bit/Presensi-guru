@@ -11,7 +11,13 @@ exports.createJadwal = async (req, res) => {
       return res.status(400).json({ message: 'Data tidak lengkap' });
     }
 
-    // ===== ambil guru =====
+    // ===== VALIDASI JAM (fix: sebelumnya tidak ada) =====
+    if (jam_mulai >= jam_selesai) {
+      return res.status(400).json({
+        message: 'Jam mulai harus lebih kecil dari jam selesai'
+      });
+    }
+
     const guruRes = await pool.query(
       `SELECT id_guru, nama_guru, mapel FROM guru WHERE id_guru = $1`,
       [id_guru]
@@ -23,7 +29,6 @@ exports.createJadwal = async (req, res) => {
 
     const guru = guruRes.rows[0];
 
-    // ===== VALIDASI MAPEL =====
     const mapelIds = Array.isArray(guru.mapel)
       ? guru.mapel.map(Number)
       : [];
@@ -32,7 +37,6 @@ exports.createJadwal = async (req, res) => {
       return res.status(400).json({ message: 'Guru tidak mengajar mapel ini' });
     }
 
-    // ===== ambil detail mapel =====
     const mapelRes = await pool.query(
       `SELECT id_mapel, nama_mapel FROM mapel WHERE id_mapel = $1`,
       [id_mapel]
@@ -42,18 +46,14 @@ exports.createJadwal = async (req, res) => {
       return res.status(404).json({ message: 'Mapel tidak ditemukan' });
     }
 
-    // ===== CEK BENTROK =====
     const bentrokRes = await pool.query(
-      `
-      SELECT 1
-      FROM jadwal
-      WHERE
-        hari = $1
-        AND (guru->>'id_guru')::int = $2
-        AND jam_mulai < $3
-        AND jam_selesai > $4
-      LIMIT 1
-      `,
+      `SELECT 1
+       FROM jadwal
+       WHERE hari = $1
+         AND (guru->>'id_guru')::int = $2
+         AND jam_mulai < $3
+         AND jam_selesai > $4
+       LIMIT 1`,
       [hari, id_guru, jam_selesai, jam_mulai]
     );
 
@@ -63,14 +63,12 @@ exports.createJadwal = async (req, res) => {
       });
     }
 
-    // ===== payload =====
     const guruPayload = {
       id_guru: guru.id_guru,
       nama_guru: guru.nama_guru,
       mapel: mapelRes.rows[0]
     };
 
-    // ===== INSERT =====
     const result = await pool.query(
       `INSERT INTO jadwal (id_kelas, hari, jam_mulai, jam_selesai, guru)
        VALUES ($1, $2, $3, $4, $5)
