@@ -1,14 +1,14 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
-const {
-  uploadImage,
-  getPublicIdFromUrl,
-  deleteImage
-} = require('../utils/cloudinary');
+// const {
+//   uploadImage,
+//   getPublicIdFromUrl,
+//   deleteImage
+// } = require('../utils/cloudinary');
 
 
 /* =======================
-    CREATE USER (ADMIN)
+   CREATE USER
 ======================= */
 exports.createUser = async (req, res) => {
   try {
@@ -51,45 +51,105 @@ exports.createUser = async (req, res) => {
 };
 
 /* =======================
-    GET ALL USERS (ADMIN)
+   GET ALL USERS
+   Query params:
+   - ?search=   → cari name atau username (case-insensitive)
+   - ?id_role=  → filter by role
+   - ?page=     → halaman (default 1)
+   - ?limit=    → item per halaman (default 10)
 ======================= */
 exports.getUsers = async (req, res) => {
-  const result = await pool.query(
-    `SELECT 
-       u.id, 
-       u.name, 
-       u.username, 
-       u.id_role, 
-       u.id_kelas, 
-       r.name AS role_name,
-       k.id AS kelas_id,
-       k.name AS kelas_name,
-       k.tingkat AS kelas_tingkat,
-       k.jurusan AS kelas_jurusan
-     FROM users u
-     JOIN roles r ON r.id = u.id_role
-     LEFT JOIN kelas k ON k.id = u.id_kelas
-     ORDER BY u.name ASC`
-  );
+  try {
+    const search = req.query.search || null;
+    const id_role = req.query.id_role ? parseInt(req.query.id_role, 10) : null;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+    const offset = (page - 1) * limit;
 
-  const formattedData = result.rows.map(row => ({
-    id: row.id,
-    name: row.name,
-    username: row.username,
-    id_role: row.id_role,
-    id_kelas: row.id_kelas,
-    role: {
-      name: row.role_name
-    },
-    kelas: row.kelas_id ? {
-      id: row.kelas_id,
-      name: row.kelas_name,
-      tingkat: row.kelas_tingkat,
-      jurusan: row.kelas_jurusan
-    } : null
-  }));
+    const params = [];
+    const where = [];
 
-  res.json(formattedData);
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(`(u.name ILIKE $${params.length} OR u.username ILIKE $${params.length})`);
+    }
+
+    if (id_role) {
+      params.push(id_role);
+      where.push(`u.id_role = $${params.length}`);
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Hitung total untuk pagination
+    const countResult = await pool.query(
+      `SELECT COUNT(DISTINCT u.id) AS total
+       FROM users u
+       ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].total, 10);
+    const totalPages = Math.ceil(total / limit);
+
+    // Ambil data dengan pagination
+    params.push(limit);
+    const limitIndex = params.length;
+    params.push(offset);
+    const offsetIndex = params.length;
+
+    const result = await pool.query(
+      `SELECT
+         u.id,
+         u.name,
+         u.username,
+         u.id_role,
+         u.id_kelas,
+         r.name AS role_name,
+         k.id   AS kelas_id,
+         k.name         AS kelas_name,
+         k.tingkat      AS kelas_tingkat,
+         j.nama_jurusan AS kelas_jurusan
+       FROM users u
+       JOIN roles r ON r.id = u.id_role
+       LEFT JOIN kelas k ON k.id = u.id_kelas
+       LEFT JOIN jurusan j ON j.id = k.id_jurusan
+       ${whereClause}
+       ORDER BY u.id DESC
+       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      params
+    );
+
+    const data = result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      username: row.username,
+      id_role: row.id_role,
+      id_kelas: row.id_kelas,
+      role: {
+        name: row.role_name
+      },
+      kelas: row.kelas_id ? {
+        id: row.kelas_id,
+        name: row.kelas_name,
+        tingkat: row.kelas_tingkat,
+        jurusan: row.kelas_jurusan
+      } : null
+    }));
+
+    res.json({
+      data,
+      pagination: {
+        page,
+        perPage: limit,
+        totalItems: total,
+        totalPages
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 /* =======================
@@ -106,42 +166,14 @@ exports.getUserById = async (req, res) => {
   if (result.rowCount === 0) {
     return res.status(404).json({ message: 'User tidak ditemukan' });
   }
+
+  res.json(result.rows[0]);
 };
 
-/* =======================
-    GET USER PROFILE (SELF)
-    Any authenticated user can get their own profile
-======================= */
-exports.getUserProfile = async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const result = await pool.query(
-      `SELECT u.id, u.name, u.username, u.no_hp, u.foto_profil, 
-              u.status, u.is_profile_complete, u.id_role, u.id_kelas,
-              r.name AS role
-       FROM users u
-       JOIN roles r ON r.id = u.id_role
-       WHERE u.id = $1`,
-      [userId]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'User tidak ditemukan' });
-    }
-
-    res.json({
-      message: 'Profile berhasil dimuat',
-      data: result.rows[0]
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
+// exports.getUserProfile = async (req, res) => { ... };
 
 /* =======================
-    UPDATE USER (ADMIN)
+   UPDATE USER
 ======================= */
 exports.updateUser = async (req, res) => {
   try {
@@ -150,6 +182,23 @@ exports.updateUser = async (req, res) => {
 
     if (!name || !username || !id_role) {
       return res.status(400).json({ message: 'Data tidak lengkap' });
+    }
+
+    // ===== VALIDASI ROLE VS KELAS (fix: sebelumnya tidak ada) =====
+    if (id_role === 2 && !id_kelas) {
+      return res.status(400).json({ message: 'KM wajib punya kelas' });
+    }
+    if (id_role !== 2 && id_kelas) {
+      return res.status(400).json({ message: 'Role ini tidak boleh punya kelas' });
+    }
+
+    // ===== CEK USERNAME DUPLIKAT (fix: sebelumnya tidak ada) =====
+    const cekUsername = await pool.query(
+      `SELECT id FROM users WHERE username = $1 AND id != $2`,
+      [username, id]
+    );
+    if (cekUsername.rowCount > 0) {
+      return res.status(400).json({ message: 'Username sudah dipakai' });
     }
 
     let query = `
@@ -165,14 +214,19 @@ exports.updateUser = async (req, res) => {
 
     if (password) {
       const hashed = await bcrypt.hash(password, 10);
-      query += `, password = $6 WHERE id = $7`;
+      query += `, password = $6 WHERE id = $7 RETURNING id`;
       values.push(hashed, id);
     } else {
-      query += ` WHERE id = $6`;
+      query += ` WHERE id = $6 RETURNING id`;
       values.push(id);
     }
 
-    await pool.query(query, values);
+    const result = await pool.query(query, values);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
     res.json({ message: 'User berhasil diupdate' });
   } catch (err) {
     console.error(err);
@@ -180,12 +234,28 @@ exports.updateUser = async (req, res) => {
   }
 };
 
-/* =======================
-    DELETE USER (ADMIN)
-======================= */
 exports.deleteUser = async (req, res) => {
   try {
-    await pool.query(`DELETE FROM users WHERE id = $1`, [req.params.id]);
+    // ===== CEK DEPENDENSI PRESENSI (fix: sebelumnya tidak ada) =====
+    const cekPresensi = await pool.query(
+      `SELECT 1 FROM presensi_guru WHERE diabsen_oleh = $1 LIMIT 1`,
+      [req.params.id]
+    );
+    if (cekPresensi.rowCount > 0) {
+      return res.status(400).json({
+        message: 'User tidak bisa dihapus, masih memiliki data presensi'
+      });
+    }
+
+    const result = await pool.query(
+      `DELETE FROM users WHERE id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
     res.json({ message: 'User berhasil dihapus' });
   } catch (err) {
     console.error(err);
@@ -193,56 +263,4 @@ exports.deleteUser = async (req, res) => {
   }
 };
 
-/* =======================
-    UPDATE PROFILE (SELF - ALL ROLES)
-======================= */
-exports.updateProfile = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { no_hp } = req.body;
-
-    // 1️⃣ ambil foto lama
-    const oldData = await pool.query(
-      `SELECT foto_profil FROM users WHERE id = $1`,
-      [userId]
-    );
-
-    if (!oldData.rowCount) {
-      return res.status(404).json({ message: 'User tidak ditemukan' });
-    }
-
-    let fotoProfilBaru = null;
-
-    // 2️⃣ kalau upload foto baru
-    if (req.file) {
-      const fotoLama = oldData.rows[0].foto_profil;
-
-      if (fotoLama) {
-        const publicId = getPublicIdFromUrl(fotoLama);
-        await deleteImage(publicId);
-      }
-
-      fotoProfilBaru = await uploadImage(req.file, 'profile');
-    }
-
-    // 3️⃣ update DB
-    const result = await pool.query(
-      `UPDATE users
-       SET no_hp = COALESCE($1, no_hp),
-           foto_profil = COALESCE($2, foto_profil),
-           is_profile_complete = true,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $3
-       RETURNING id, name, username, no_hp, foto_profil, is_profile_complete`,
-      [no_hp || null, fotoProfilBaru, userId]
-    );
-
-    res.json({
-      message: 'Profil berhasil diperbarui',
-      data: result.rows[0]
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
+// exports.updateProfile = async (req, res) => { ... };

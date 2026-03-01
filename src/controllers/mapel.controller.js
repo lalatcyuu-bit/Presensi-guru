@@ -39,20 +39,83 @@ exports.createMapel = async (req, res) => {
 
 /* =======================
    GET MAPEL
-   ?all=true → ambil semua
+   Query params:
+   - ?all=true     → ambil semua tanpa pagination
+   - ?search=      → cari nama_mapel atau kode_mapel (case-insensitive)
+   - ?status=      → filter 'aktif' | 'nonaktif'
+   - ?page=        → halaman (default 1)
+   - ?limit=       → item per halaman (default 10)
 ======================= */
 exports.getMapel = async (req, res) => {
-  const { all } = req.query;
-
   try {
-    const query = all
-      ? `SELECT id_mapel, nama_mapel, kode_mapel, status FROM mapel`
-      : `SELECT id_mapel, nama_mapel, kode_mapel, status
-         FROM mapel
-         WHERE status = true`;
+    const search = req.query.search || null;
+    const status = req.query.status || null;  // 'aktif' | 'nonaktif'
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+    const offset = (page - 1) * limit;
 
-    const result = await pool.query(`${query} ORDER BY nama_mapel ASC`);
-    res.json(result.rows);
+    const params = [];
+    const where = [];
+
+    // Filter search
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(`(nama_mapel ILIKE $${params.length} OR kode_mapel ILIKE $${params.length})`);
+    }
+
+    // Filter status
+    if (status === 'aktif') {
+      where.push(`status = true`);
+    } else if (status === 'nonaktif') {
+      where.push(`status = false`);
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Ambil semua tanpa pagination (untuk keperluan dropdown, dll)
+    if (req.query.all === 'true') {
+      const result = await pool.query(
+        `SELECT id_mapel, nama_mapel, kode_mapel, status
+         FROM mapel
+         ${whereClause}
+         ORDER BY nama_mapel ASC`,
+        params
+      );
+      return res.json({ data: result.rows });
+    }
+
+    // Hitung total untuk pagination
+    const countResult = await pool.query(
+      `SELECT COUNT(*) AS total FROM mapel ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].total, 10);
+    const totalPages = Math.ceil(total / limit);
+
+    // Ambil data dengan pagination
+    params.push(limit);
+    const limitIndex = params.length;
+    params.push(offset);
+    const offsetIndex = params.length;
+
+    const result = await pool.query(
+      `SELECT id_mapel, nama_mapel, kode_mapel, status
+       FROM mapel
+       ${whereClause}
+       ORDER BY id_mapel DESC
+       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      params
+    );
+
+    res.json({
+      data: result.rows,
+      pagination: {
+        page,
+        perPage: limit,
+        totalItems: total,
+        totalPages
+      }
+    });
 
   } catch (err) {
     console.error(err);
@@ -64,18 +127,23 @@ exports.getMapel = async (req, res) => {
    GET MAPEL BY ID
 ======================= */
 exports.getMapelById = async (req, res) => {
-  const result = await pool.query(
-    `SELECT id_mapel, nama_mapel, kode_mapel, status
-     FROM mapel
-     WHERE id_mapel = $1`,
-    [req.params.id]
-  );
+  try {
+    const result = await pool.query(
+      `SELECT id_mapel, nama_mapel, kode_mapel, status
+       FROM mapel
+       WHERE id_mapel = $1`,
+      [req.params.id]
+    );
 
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  res.json(result.rows[0]);
 };
 
 /* =======================
@@ -126,22 +194,27 @@ exports.updateMapel = async (req, res) => {
    NON-AKTIFKAN MAPEL
 ======================= */
 exports.nonAktifkanMapel = async (req, res) => {
-  const result = await pool.query(
-    `UPDATE mapel
-     SET status = false
-     WHERE id_mapel = $1
-     RETURNING *`,
-    [req.params.id]
-  );
+  try {
+    const result = await pool.query(
+      `UPDATE mapel
+       SET status = false
+       WHERE id_mapel = $1
+       RETURNING *`,
+      [req.params.id]
+    );
 
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Mapel berhasil dinonaktifkan',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  res.json({
-    message: 'Mapel berhasil dinonaktifkan',
-    data: result.rows[0]
-  });
 };
 
 /* =======================

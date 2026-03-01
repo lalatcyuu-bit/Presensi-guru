@@ -5,27 +5,38 @@ const pool = require('../db');
 ======================= */
 exports.createKelas = async (req, res) => {
     try {
-        const { name, tingkat, jurusan } = req.body;
+        const { name, tingkat, id_jurusan } = req.body;
 
-        if (!name || !tingkat || !jurusan) {
+        if (!name || !tingkat || !id_jurusan) {
             return res.status(400).json({ message: 'Data tidak lengkap' });
         }
 
-        // Cek apakah nama kelas sudah ada
+        const validTingkat = ['X', 'XI', 'XII'];
+        if (!validTingkat.includes(tingkat)) {
+            return res.status(400).json({ message: 'Tingkat tidak valid. Pilih X, XI, atau XII' });
+        }
+
+        const cekJurusan = await pool.query(
+            `SELECT id FROM jurusan WHERE id = $1`,
+            [id_jurusan]
+        );
+        if (cekJurusan.rowCount === 0) {
+            return res.status(404).json({ message: 'Jurusan tidak ditemukan' });
+        }
+
         const cekKelas = await pool.query(
             `SELECT id FROM kelas WHERE name = $1`,
             [name]
         );
-
         if (cekKelas.rowCount > 0) {
             return res.status(400).json({ message: 'Nama kelas sudah dipakai' });
         }
 
         const result = await pool.query(
-            `INSERT INTO kelas (name, tingkat, jurusan)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-            [name, tingkat, jurusan]
+            `INSERT INTO kelas (name, tingkat, id_jurusan)
+             VALUES ($1, $2, $3)
+             RETURNING *`,
+            [name, tingkat, id_jurusan]
         );
 
         res.status(201).json({
@@ -40,16 +51,103 @@ exports.createKelas = async (req, res) => {
 
 /* =======================
    GET ALL KELAS
+   Query params:
+   - ?search=      cari nama kelas (case-insensitive)
+   - ?tingkat=     filter X | XI | XII
+   - ?id_jurusan=  filter by jurusan
+   - ?all=true     ambil semua tanpa pagination (untuk dropdown)
+   - ?page=        halaman (default 1)
+   - ?limit=       item per halaman (default 10)
 ======================= */
 exports.getKelas = async (req, res) => {
     try {
+        const search = req.query.search || null;
+        const tingkat = req.query.tingkat || null;
+        const id_jurusan = req.query.id_jurusan ? parseInt(req.query.id_jurusan, 10) : null;
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+        const offset = (page - 1) * limit;
+
+        const params = [];
+        const where = [];
+
+        if (search) {
+            params.push(`%${search}%`);
+            where.push(`k.name ILIKE $${params.length}`);
+        }
+
+        if (tingkat) {
+            params.push(tingkat);
+            where.push(`k.tingkat = $${params.length}`);
+        }
+
+        if (id_jurusan) {
+            params.push(id_jurusan);
+            where.push(`k.id_jurusan = $${params.length}`);
+        }
+
+        const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+        const baseFrom = `
+            FROM kelas k
+            LEFT JOIN jurusan j ON j.id = k.id_jurusan
+            ${whereClause}
+        `;
+
+        // Ambil semua tanpa pagination (untuk dropdown)
+        if (req.query.all === 'true') {
+            const result = await pool.query(
+                `SELECT
+                    k.id,
+                    k.name,
+                    k.tingkat,
+                    k.id_jurusan,
+                    j.nama_jurusan,
+                    j.kode_jurusan
+                 ${baseFrom}
+                 ORDER BY k.tingkat ASC, k.name ASC`,
+                params
+            );
+            return res.json({ data: result.rows });
+        }
+
+        // Hitung total untuk pagination
+        const countResult = await pool.query(
+            `SELECT COUNT(*) AS total ${baseFrom}`,
+            params
+        );
+        const total = parseInt(countResult.rows[0].total, 10);
+        const totalPages = Math.ceil(total / limit);
+
+        // Ambil data dengan pagination
+        params.push(limit);
+        const limitIndex = params.length;
+        params.push(offset);
+        const offsetIndex = params.length;
+
         const result = await pool.query(
-            `SELECT id, name, tingkat, jurusan
-       FROM kelas
-       ORDER BY tingkat ASC, name ASC`
+            `SELECT
+                k.id,
+                k.name,
+                k.tingkat,
+                k.id_jurusan,
+                j.nama_jurusan,
+                j.kode_jurusan
+             ${baseFrom}
+             ORDER BY k.id DESC
+             LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+            params
         );
 
-        res.json(result.rows);
+        res.json({
+            data: result.rows,
+            pagination: {
+                page,
+                perPage: limit,
+                totalItems: total,
+                totalPages
+            }
+        });
     } catch (err) {
         console.error('GET KELAS ERROR:', err);
         res.status(500).json({ message: 'Server error' });
@@ -62,9 +160,16 @@ exports.getKelas = async (req, res) => {
 exports.getKelasById = async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, name, tingkat, jurusan
-       FROM kelas
-       WHERE id = $1`,
+            `SELECT
+                k.id,
+                k.name,
+                k.tingkat,
+                k.id_jurusan,
+                j.nama_jurusan,
+                j.kode_jurusan
+             FROM kelas k
+             LEFT JOIN jurusan j ON j.id = k.id_jurusan
+             WHERE k.id = $1`,
             [req.params.id]
         );
 
@@ -84,31 +189,40 @@ exports.getKelasById = async (req, res) => {
 ======================= */
 exports.updateKelas = async (req, res) => {
     try {
-        const { name, tingkat, jurusan } = req.body;
+        const { name, tingkat, id_jurusan } = req.body;
         const { id } = req.params;
 
-        if (!name || !tingkat || !jurusan) {
+        if (!name || !tingkat || !id_jurusan) {
             return res.status(400).json({ message: 'Data tidak lengkap' });
         }
 
-        // Cek apakah nama kelas sudah dipakai oleh kelas lain
+        const validTingkat = ['X', 'XI', 'XII'];
+        if (!validTingkat.includes(tingkat)) {
+            return res.status(400).json({ message: 'Tingkat tidak valid. Pilih X, XI, atau XII' });
+        }
+
+        const cekJurusan = await pool.query(
+            `SELECT id FROM jurusan WHERE id = $1`,
+            [id_jurusan]
+        );
+        if (cekJurusan.rowCount === 0) {
+            return res.status(404).json({ message: 'Jurusan tidak ditemukan' });
+        }
+
         const cekNama = await pool.query(
             `SELECT id FROM kelas WHERE name = $1 AND id != $2`,
             [name, id]
         );
-
         if (cekNama.rowCount > 0) {
             return res.status(400).json({ message: 'Nama kelas sudah dipakai' });
         }
 
         const result = await pool.query(
             `UPDATE kelas
-       SET name = $1,
-           tingkat = $2,
-           jurusan = $3
-       WHERE id = $4
-       RETURNING *`,
-            [name, tingkat, jurusan, id]
+             SET name = $1, tingkat = $2, id_jurusan = $3
+             WHERE id = $4
+             RETURNING *`,
+            [name, tingkat, id_jurusan, id]
         );
 
         if (result.rowCount === 0) {
@@ -130,24 +244,20 @@ exports.updateKelas = async (req, res) => {
 ======================= */
 exports.deleteKelas = async (req, res) => {
     try {
-        // Cek apakah kelas masih dipakai di users
         const cekUsers = await pool.query(
             `SELECT id FROM users WHERE id_kelas = $1 LIMIT 1`,
             [req.params.id]
         );
-
         if (cekUsers.rowCount > 0) {
             return res.status(400).json({
                 message: 'Kelas tidak bisa dihapus, masih ada user yang terdaftar'
             });
         }
 
-        // Cek apakah kelas masih dipakai di jadwal
         const cekJadwal = await pool.query(
             `SELECT id_jadwal FROM jadwal WHERE id_kelas = $1 LIMIT 1`,
             [req.params.id]
         );
-
         if (cekJadwal.rowCount > 0) {
             return res.status(400).json({
                 message: 'Kelas tidak bisa dihapus, masih ada jadwal yang terdaftar'
@@ -166,6 +276,24 @@ exports.deleteKelas = async (req, res) => {
         res.json({ message: 'Kelas berhasil dihapus' });
     } catch (err) {
         console.error('DELETE KELAS ERROR:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+/* =======================
+   GET ALL JURUSAN
+   Untuk dropdown di form kelas
+======================= */
+exports.getJurusan = async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, nama_jurusan, kode_jurusan
+             FROM jurusan
+             ORDER BY nama_jurusan ASC`
+        );
+        res.json({ data: result.rows });
+    } catch (err) {
+        console.error('GET JURUSAN ERROR:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
