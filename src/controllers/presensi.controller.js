@@ -325,6 +325,20 @@ exports.createPresensi = async (req, res) => {
   try {
     const { id_jadwal, status, diabsen_oleh, memberikan_tugas, catatan } = req.body;
 
+    if (!id_jadwal || !status || !diabsen_oleh) {
+      return res.status(400).json({ message: 'Data tidak lengkap' });
+    }
+
+    // ===== VALIDASI JAM (fix: sebelumnya tidak ada) =====
+    const jadwalResult = await pool.query(
+      `SELECT jam_mulai, jam_selesai FROM jadwal WHERE id_jadwal = $1`,
+      [id_jadwal]
+    );
+
+    if (jadwalResult.rowCount === 0) {
+      return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+    }
+
     if (!req.file) {
       return res.status(400).json({ message: 'Foto wajib diupload' });
     }
@@ -333,14 +347,28 @@ exports.createPresensi = async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO presensi_guru
-       (id_jadwal, status, foto_bukti, diabsen_oleh, memberikan_tugas, catatan)
-       VALUES ($1, $2, $3, $4, $5, $6)
+       (id_jadwal, status, foto_bukti, diabsen_oleh, memberikan_tugas, catatan, status_approve)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [id_jadwal, status, fotoLink, diabsen_oleh, memberikan_tugas || null, catatan || null]
+      [
+        id_jadwal,
+        status,
+        fotoLink,
+        diabsen_oleh,
+        memberikan_tugas || null,
+        catatan || null,
+        'Pending'
+      ]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({
+      message: 'Presensi berhasil disimpan',
+      data: result.rows[0]
+    });
   } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'Presensi untuk jadwal ini hari ini sudah ada' });
+    }
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
@@ -722,7 +750,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
           j.jam_mulai,
           j.jam_selesai,
           j.guru,
-          k.name         AS kelas_name,
+          k.name          AS kelas_name,
           k.tingkat,
           jr.nama_jurusan AS jurusan
         FROM generate_series(${dateStart}, ${dateEnd}, '1 day'::interval) gs
@@ -744,14 +772,19 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     const countResult = await pool.query(
       `${slotsCTE}
        SELECT
-         COUNT(*)                                             AS total,
-         COUNT(*) FILTER (WHERE p.status = 'Hadir')          AS total_hadir,
-         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')    AS total_tidak_hadir,
-         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)       AS total_belum
+         COUNT(*)                                          AS total,
+         COUNT(*) FILTER (WHERE p.status = 'Hadir')       AS total_hadir,
+         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
+         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)    AS total_belum
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
-       WHERE 1=1 ${statusFilter}`,
+       WHERE NOT (
+         s.tanggal = CURRENT_DATE
+         AND s.jam_selesai > (NOW() AT TIME ZONE 'Asia/Jakarta')::time
+         AND p.id_presensi IS NULL
+       )
+       ${statusFilter}`,
       params
     );
 
@@ -789,7 +822,12 @@ exports.getRiwayatPresensiKM = async (req, res) => {
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
-       WHERE 1=1 ${statusFilter}
+       WHERE NOT (
+         s.tanggal = CURRENT_DATE
+         AND s.jam_selesai > (NOW() AT TIME ZONE 'Asia/Jakarta')::time
+         AND p.id_presensi IS NULL
+       )
+       ${statusFilter}
        ORDER BY s.tanggal DESC, s.jam_mulai DESC
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params

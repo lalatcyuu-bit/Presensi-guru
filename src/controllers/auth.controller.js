@@ -7,7 +7,7 @@ exports.login = async (req, res) => {
     const { username, password } = req.body;
 
     const result = await pool.query(
-      `SELECT u.id, u.name, u.password, u.id_role, u.id_kelas, r.name AS role
+      `SELECT u.id, u.name, u.password, u.id_role, u.id_kelas, u.is_profile_complete, r.name AS role
        FROM users u
        JOIN roles r ON u.id_role = r.id
        WHERE u.username = $1`,
@@ -42,6 +42,7 @@ exports.login = async (req, res) => {
         name: user.name,
         role: user.role,
         id_kelas: user.id_kelas,
+        is_profile_complete: user.is_profile_complete,
       },
     });
   } catch (err) {
@@ -54,14 +55,14 @@ exports.login = async (req, res) => {
 exports.getCurrentUser = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.username, r.name AS role,
+      `SELECT u.id, u.name, u.username, u.is_profile_complete, r.name AS role,
         k.id AS kelas_id, k.name AS kelas_name,
         k.tingkat AS kelas_tingkat, j.nama_jurusan AS kelas_jurusan
- FROM users u
- JOIN roles r ON u.id_role = r.id
- LEFT JOIN kelas k ON k.id = u.id_kelas
- LEFT JOIN jurusan j ON j.id = k.id_jurusan
- WHERE u.id = $1`,
+       FROM users u
+       JOIN roles r ON u.id_role = r.id
+       LEFT JOIN kelas k ON k.id = u.id_kelas
+       LEFT JOIN jurusan j ON j.id = k.id_jurusan
+       WHERE u.id = $1`,
       [req.user.id]
     );
 
@@ -77,6 +78,7 @@ exports.getCurrentUser = async (req, res) => {
         name: user.name,
         username: user.username,
         role: user.role,
+        is_profile_complete: user.is_profile_complete, // ✅ tambah ini
         kelas: user.kelas_id ? {
           id: user.kelas_id,
           name: user.kelas_name,
@@ -110,18 +112,20 @@ exports.updateProfile = async (req, res) => {
         UPDATE users
         SET name = $1,
             password = $2,
+            is_profile_complete = true,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $3
-        RETURNING id, name, username
+        RETURNING id, name, username, is_profile_complete
       `;
       values = [name, hashed, userId];
     } else {
       query = `
         UPDATE users
         SET name = $1,
+            is_profile_complete = true,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
-        RETURNING id, name, username
+        RETURNING id, name, username, is_profile_complete
       `;
       values = [name, userId];
     }

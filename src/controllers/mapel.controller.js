@@ -127,18 +127,23 @@ exports.getMapel = async (req, res) => {
    GET MAPEL BY ID
 ======================= */
 exports.getMapelById = async (req, res) => {
-  const result = await pool.query(
-    `SELECT id_mapel, nama_mapel, kode_mapel, status
-     FROM mapel
-     WHERE id_mapel = $1`,
-    [req.params.id]
-  );
+  try {
+    const result = await pool.query(
+      `SELECT id_mapel, nama_mapel, kode_mapel, status
+       FROM mapel
+       WHERE id_mapel = $1`,
+      [req.params.id]
+    );
 
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  res.json(result.rows[0]);
 };
 
 /* =======================
@@ -189,22 +194,27 @@ exports.updateMapel = async (req, res) => {
    NON-AKTIFKAN MAPEL
 ======================= */
 exports.nonAktifkanMapel = async (req, res) => {
-  const result = await pool.query(
-    `UPDATE mapel
-     SET status = false
-     WHERE id_mapel = $1
-     RETURNING *`,
-    [req.params.id]
-  );
+  try {
+    const result = await pool.query(
+      `UPDATE mapel
+       SET status = false
+       WHERE id_mapel = $1
+       RETURNING *`,
+      [req.params.id]
+    );
 
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Mapel berhasil dinonaktifkan',
+      data: result.rows[0]
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  res.json({
-    message: 'Mapel berhasil dinonaktifkan',
-    data: result.rows[0]
-  });
 };
 
 /* =======================

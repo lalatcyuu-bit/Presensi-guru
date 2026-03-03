@@ -184,6 +184,23 @@ exports.updateUser = async (req, res) => {
       return res.status(400).json({ message: 'Data tidak lengkap' });
     }
 
+    // ===== VALIDASI ROLE VS KELAS (fix: sebelumnya tidak ada) =====
+    if (id_role === 2 && !id_kelas) {
+      return res.status(400).json({ message: 'KM wajib punya kelas' });
+    }
+    if (id_role !== 2 && id_kelas) {
+      return res.status(400).json({ message: 'Role ini tidak boleh punya kelas' });
+    }
+
+    // ===== CEK USERNAME DUPLIKAT (fix: sebelumnya tidak ada) =====
+    const cekUsername = await pool.query(
+      `SELECT id FROM users WHERE username = $1 AND id != $2`,
+      [username, id]
+    );
+    if (cekUsername.rowCount > 0) {
+      return res.status(400).json({ message: 'Username sudah dipakai' });
+    }
+
     let query = `
       UPDATE users
       SET name = $1,
@@ -197,14 +214,19 @@ exports.updateUser = async (req, res) => {
 
     if (password) {
       const hashed = await bcrypt.hash(password, 10);
-      query += `, password = $6 WHERE id = $7`;
+      query += `, password = $6 WHERE id = $7 RETURNING id`;
       values.push(hashed, id);
     } else {
-      query += ` WHERE id = $6`;
+      query += ` WHERE id = $6 RETURNING id`;
       values.push(id);
     }
 
-    await pool.query(query, values);
+    const result = await pool.query(query, values);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
     res.json({ message: 'User berhasil diupdate' });
   } catch (err) {
     console.error(err);
@@ -212,12 +234,28 @@ exports.updateUser = async (req, res) => {
   }
 };
 
-/* =======================
-   DELETE USER
-======================= */
 exports.deleteUser = async (req, res) => {
   try {
-    await pool.query(`DELETE FROM users WHERE id = $1`, [req.params.id]);
+    // ===== CEK DEPENDENSI PRESENSI (fix: sebelumnya tidak ada) =====
+    const cekPresensi = await pool.query(
+      `SELECT 1 FROM presensi_guru WHERE diabsen_oleh = $1 LIMIT 1`,
+      [req.params.id]
+    );
+    if (cekPresensi.rowCount > 0) {
+      return res.status(400).json({
+        message: 'User tidak bisa dihapus, masih memiliki data presensi'
+      });
+    }
+
+    const result = await pool.query(
+      `DELETE FROM users WHERE id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
     res.json({ message: 'User berhasil dihapus' });
   } catch (err) {
     console.error(err);
