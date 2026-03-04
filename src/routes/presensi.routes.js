@@ -38,6 +38,9 @@ router.post('/', auth, upload.single('foto_bukti'), controller.createPresensi);
 // Get all presensi
 router.get('/', auth, role.onlyPiketOrAdmin, controller.getPresensi);
 
+// Get dashboard today
+router.get('/dashboard/today', auth, role.onlyPiketOrAdmin, controller.getDashboardToday);
+
 // Get riwayat presensi untuk KM
 router.get('/riwayat', auth, role.onlyKM, controller.getRiwayatPresensiKM);
 
