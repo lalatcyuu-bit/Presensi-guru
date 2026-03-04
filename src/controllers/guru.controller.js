@@ -4,6 +4,8 @@ const {
   getWIBDate,
 } = require('../utils/timezone');
 
+const XLSX = require('xlsx');
+
 const guruWithMapelQuery = `
 SELECT 
   g.id_guru,
