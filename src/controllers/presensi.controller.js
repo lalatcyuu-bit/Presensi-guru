@@ -886,3 +886,59 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+/* =======================
+   DASHBOARD HARI INI
+   - Guru Hadir
+   - Guru Tidak Hadir
+   - Belum Presensi
+======================= */
+exports.getDashboardToday = async (req, res) => {
+  try {
+    const today = getWIBDate(); // format YYYY-MM-DD
+
+    const dayNames = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+    const dateObj = new Date(today + 'T00:00:00+07:00');
+    const todayName = dayNames[dateObj.getDay()];
+
+    const result = await pool.query(`
+      SELECT
+        COUNT(j.id_jadwal) FILTER (
+          WHERE p.status = 'Hadir'
+        ) AS guru_hadir,
+
+        COUNT(j.id_jadwal) FILTER (
+          WHERE p.status = 'Tidak Hadir'
+        ) AS guru_tidak_hadir,
+
+        COUNT(j.id_jadwal) FILTER (
+          WHERE p.id_presensi IS NULL
+        ) AS belum_presensi,
+
+        COUNT(j.id_jadwal) AS total_jadwal
+
+      FROM jadwal j
+      LEFT JOIN presensi_guru p
+        ON p.id_jadwal = j.id_jadwal
+        AND p.tanggal = $1
+      WHERE j.hari = $2
+    `, [today, todayName]);
+
+    const data = result.rows[0];
+
+    res.json({
+      tanggal: today,
+      hari: todayName,
+      summary: {
+        total_jadwal: parseInt(data.total_jadwal),
+        guru_hadir: parseInt(data.guru_hadir),
+        guru_tidak_hadir: parseInt(data.guru_tidak_hadir),
+        belum_presensi: parseInt(data.belum_presensi)
+      }
+    });
+
+  } catch (err) {
+    console.error('DASHBOARD ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
