@@ -590,18 +590,26 @@ exports.getTrenKehadiranKeseluruhan = async (req, res) => {
 ======================= */
 exports.getTopGuruHadir = async (req, res) => {
   try {
+
     const { range } = req.query;
     const { dateFilter } = getDateConfig(range);
 
     const result = await pool.query(`
       SELECT
-        (j.guru->>'nama_guru') AS nama_guru,
-        COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir,
-        COUNT(*) AS total_jadwal
-      FROM presensi_guru p
-      JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-      WHERE ${dateFilter}
-      GROUP BY nama_guru
+        nama_guru,
+        total_hadir,
+        total_jadwal,
+        RANK() OVER (ORDER BY total_hadir DESC) AS rank
+      FROM (
+        SELECT
+          (j.guru->>'nama_guru') AS nama_guru,
+          COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir,
+          COUNT(*) AS total_jadwal
+        FROM presensi_guru p
+        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        WHERE ${dateFilter}
+        GROUP BY nama_guru
+      ) data
       ORDER BY total_hadir DESC
       LIMIT 10
     `);
@@ -609,6 +617,7 @@ exports.getTopGuruHadir = async (req, res) => {
     res.json({
       range: range || 'bulan',
       data: result.rows.map(r => ({
+        rank: parseInt(r.rank),
         nama_guru: r.nama_guru,
         total_hadir: parseInt(r.total_hadir),
         total_jadwal: parseInt(r.total_jadwal),
@@ -617,9 +626,15 @@ exports.getTopGuruHadir = async (req, res) => {
           : 0
       }))
     });
+
   } catch (err) {
+
     console.error('TOP HADIR ERROR:', err);
-    res.status(500).json({ message: 'Server error' });
+
+    res.status(500).json({
+      message: 'Server error'
+    });
+
   }
 };
 
