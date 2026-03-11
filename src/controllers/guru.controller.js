@@ -25,6 +25,36 @@ LEFT JOIN mapel m
   )
 `;
 
+function getDateConfig(range) {
+  switch (range) {
+    case 'minggu':
+      return {
+        dateFilter: `
+          p.tanggal >= DATE_TRUNC('week', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)::date
+          AND p.tanggal <= (DATE_TRUNC('week', (NOW() AT TIME ZONE 'Asia/Jakarta')::date) + INTERVAL '4 days')::date
+        `,
+        groupExpr: `EXTRACT(DOW FROM p.tanggal)::int`,
+        labels: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'],
+        periodKeys: [1, 2, 3, 4, 5]
+      };
+    case 'tahun':
+      return {
+        dateFilter: `DATE_TRUNC('year', p.tanggal) = DATE_TRUNC('year', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`,
+        groupExpr: `EXTRACT(MONTH FROM p.tanggal)::int`,
+        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'],
+        periodKeys: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      };
+    case 'bulan':
+    default:
+      return {
+        dateFilter: `DATE_TRUNC('month', p.tanggal) = DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`,
+        groupExpr: `CEIL(EXTRACT(DAY FROM p.tanggal) / 7.0)::int`,
+        labels: ['Minggu 1', 'Minggu 2', 'Minggu 3', 'Minggu 4'],
+        periodKeys: [1, 2, 3, 4]
+      };
+  }
+}
+
 /* =======================
    GET ALL GURU
    Query params:
@@ -393,35 +423,15 @@ exports.getStatistikGuru = async (req, res) => {
 ======================= */
 exports.getBarHadirVsTidak = async (req, res) => {
   try {
-    const { range, id_guru } = req.query;
+    const { range, id_kelas } = req.query;
+    const { dateFilter } = getDateConfig(range);
 
-    let dateFilter = '';
-    let params = [];
+    const params = [];
+    let extraFilter = '';
 
-    switch (range) {
-      case 'hari':
-        dateFilter = `p.tanggal = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`;
-        break;
-
-      case 'minggu':
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '7 days'`;
-        break;
-
-      case 'bulan':
-        dateFilter = `
-          DATE_TRUNC('month', p.tanggal) =
-          DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
-        `;
-        break;
-
-      default:
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '30 days'`;
-    }
-
-    let guruFilter = '';
-    if (id_guru) {
-      params.push(parseInt(id_guru));
-      guruFilter = `AND (j.guru->>'id_guru')::int = $${params.length}`;
+    if (id_kelas) {
+      params.push(parseInt(id_kelas));
+      extraFilter += ` AND j.id_kelas = $${params.length}`;
     }
 
     const result = await pool.query(`
@@ -431,73 +441,92 @@ exports.getBarHadirVsTidak = async (req, res) => {
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
       WHERE ${dateFilter}
-      ${guruFilter}
+      ${extraFilter}
     `, params);
 
-    const hadir = parseInt(result.rows[0].hadir);
-    const tidakHadir = parseInt(result.rows[0].tidak_hadir);
-
     res.json({
-      range: range || '30_hari',
+      range: range || 'bulan',
       labels: ['Hadir', 'Tidak Hadir'],
-      data: [hadir, tidakHadir]
+      data: [parseInt(result.rows[0].hadir), parseInt(result.rows[0].tidak_hadir)]
     });
-
   } catch (err) {
     console.error('BAR CHART ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
+
 /* =======================
    LINE CHART
 ======================= */
 exports.getLineHadirPerGuru = async (req, res) => {
   try {
-    const { range } = req.query;
+    const { range, id_kelas } = req.query;
+    const { dateFilter, groupExpr, labels, periodKeys } = getDateConfig(range);
 
-    let dateFilter = '';
+    let namaGuruList = [];
 
-    switch (range) {
-      case 'hari':
-        dateFilter = `p.tanggal = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`;
-        break;
+    if (id_kelas) {
+      // Semua guru yang punya jadwal di kelas ini
+      const guruResult = await pool.query(`
+        SELECT DISTINCT (j.guru->>'nama_guru') AS nama_guru
+        FROM jadwal j
+        WHERE j.id_kelas = $1
+        ORDER BY nama_guru ASC
+      `, [parseInt(id_kelas)]);
+      namaGuruList = guruResult.rows.map(r => r.nama_guru);
+    } else {
+      // Top 10 guru berdasarkan total hadir di periode ini
+      const topResult = await pool.query(`
+        SELECT (j.guru->>'nama_guru') AS nama_guru
+        FROM presensi_guru p
+        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        WHERE ${dateFilter}
+          AND p.status = 'Hadir'
+        GROUP BY nama_guru
+        ORDER BY COUNT(*) DESC
+        LIMIT 10
+      `);
+      namaGuruList = topResult.rows.map(r => r.nama_guru);
+    }
 
-      case 'minggu':
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '7 days'`;
-        break;
+    if (namaGuruList.length === 0) {
+      return res.json({ range: range || 'bulan', labels, datasets: [] });
+    }
 
-      case 'bulan':
-        dateFilter = `
-          DATE_TRUNC('month', p.tanggal) =
-          DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
-        `;
-        break;
-
-      default:
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '30 days'`;
+    const params = [namaGuruList];
+    let kelasFilter = '';
+    if (id_kelas) {
+      params.push(parseInt(id_kelas));
+      kelasFilter = `AND j.id_kelas = $${params.length}`;
     }
 
     const result = await pool.query(`
       SELECT
         (j.guru->>'nama_guru') AS nama_guru,
+        ${groupExpr} AS period_key,
         COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
       WHERE ${dateFilter}
-      GROUP BY nama_guru
-      ORDER BY nama_guru ASC
-    `);
+        AND (j.guru->>'nama_guru') = ANY($1)
+        ${kelasFilter}
+      GROUP BY nama_guru, period_key
+      ORDER BY nama_guru ASC, period_key ASC
+    `, params);
 
-    const labels = result.rows.map(r => r.nama_guru);
-    const data = result.rows.map(r => parseInt(r.total_hadir));
+    const guruMap = {};
+    for (const row of result.rows) {
+      if (!guruMap[row.nama_guru]) guruMap[row.nama_guru] = {};
+      guruMap[row.nama_guru][row.period_key] = parseInt(row.total_hadir);
+    }
 
-    res.json({
-      range: range || '30_hari',
-      labels,
-      data
-    });
+    const datasets = namaGuruList.map(nama_guru => ({
+      nama_guru,
+      data: periodKeys.map(k => guruMap[nama_guru]?.[k] || 0)
+    }));
 
+    res.json({ range: range || 'bulan', labels, datasets });
   } catch (err) {
     console.error('LINE CHART ERROR:', err);
     res.status(500).json({ message: 'Server error' });
@@ -505,33 +534,103 @@ exports.getLineHadirPerGuru = async (req, res) => {
 };
 
 /* =======================
+   TAMBAH — getTrenKehadiranKeseluruhan
+   GET /guru/tren?range=bulan&id_kelas=1
+   Time-series hadir & tidak hadir keseluruhan / per kelas
+======================= */
+exports.getTrenKehadiranKeseluruhan = async (req, res) => {
+  try {
+    const { range, id_kelas } = req.query;
+    const { dateFilter, groupExpr, labels, periodKeys } = getDateConfig(range);
+
+    const params = [];
+    let kelasFilter = '';
+    if (id_kelas) {
+      params.push(parseInt(id_kelas));
+      kelasFilter = `AND j.id_kelas = $${params.length}`;
+    }
+
+    const result = await pool.query(`
+      SELECT
+        ${groupExpr} AS period_key,
+        COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir,
+        COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir
+      FROM presensi_guru p
+      JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      WHERE ${dateFilter}
+      ${kelasFilter}
+      GROUP BY period_key
+      ORDER BY period_key ASC
+    `, params);
+
+    const dataMap = {};
+    for (const row of result.rows) {
+      dataMap[row.period_key] = {
+        hadir: parseInt(row.total_hadir),
+        tidakHadir: parseInt(row.total_tidak_hadir)
+      };
+    }
+
+    res.json({
+      range: range || 'bulan',
+      labels,
+      hadir: periodKeys.map(k => dataMap[k]?.hadir || 0),
+      tidakHadir: periodKeys.map(k => dataMap[k]?.tidakHadir || 0)
+    });
+  } catch (err) {
+    console.error('TREN ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   TAMBAH — getTopGuruHadir
+   GET /guru/top-hadir?range=bulan
+   Top 10 guru paling sering hadir + persentase
+======================= */
+exports.getTopGuruHadir = async (req, res) => {
+  try {
+    const { range } = req.query;
+    const { dateFilter } = getDateConfig(range);
+
+    const result = await pool.query(`
+      SELECT
+        (j.guru->>'nama_guru') AS nama_guru,
+        COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir,
+        COUNT(*) AS total_jadwal
+      FROM presensi_guru p
+      JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      WHERE ${dateFilter}
+      GROUP BY nama_guru
+      ORDER BY total_hadir DESC
+      LIMIT 10
+    `);
+
+    res.json({
+      range: range || 'bulan',
+      data: result.rows.map(r => ({
+        nama_guru: r.nama_guru,
+        total_hadir: parseInt(r.total_hadir),
+        total_jadwal: parseInt(r.total_jadwal),
+        persen: r.total_jadwal > 0
+          ? Math.round((parseInt(r.total_hadir) / parseInt(r.total_jadwal)) * 100)
+          : 0
+      }))
+    });
+  } catch (err) {
+    console.error('TOP HADIR ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
+/* =======================
    TOP 10 GURU TIDAK HADIR
 ======================= */
 exports.getTopGuruTidakHadir = async (req, res) => {
   try {
     const { range } = req.query;
-
-    let dateFilter = '';
-
-    switch (range) {
-      case 'hari':
-        dateFilter = `p.tanggal = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`;
-        break;
-
-      case 'minggu':
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '7 days'`;
-        break;
-
-      case 'bulan':
-        dateFilter = `
-          DATE_TRUNC('month', p.tanggal) =
-          DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
-        `;
-        break;
-
-      default:
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '30 days'`;
-    }
+    const { dateFilter } = getDateConfig(range);
 
     const result = await pool.query(`
       SELECT
@@ -546,13 +645,12 @@ exports.getTopGuruTidakHadir = async (req, res) => {
     `);
 
     res.json({
-      range: range || '30_hari',
+      range: range || 'bulan',
       data: result.rows.map(r => ({
         nama_guru: r.nama_guru,
         total_tidak_hadir: parseInt(r.total_tidak_hadir)
       }))
     });
-
   } catch (err) {
     console.error('TOP TIDAK HADIR ERROR:', err);
     res.status(500).json({ message: 'Server error' });
