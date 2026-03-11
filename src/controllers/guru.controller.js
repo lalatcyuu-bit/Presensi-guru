@@ -5,6 +5,9 @@ const {
 } = require('../utils/timezone');
 
 const XLSX = require('xlsx');
+const {
+  getWIBDate,
+} = require('../utils/timezone');
 
 const guruWithMapelQuery = `
 SELECT 
