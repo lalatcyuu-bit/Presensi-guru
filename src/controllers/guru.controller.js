@@ -4,6 +4,8 @@ const {
   getWIBDate,
 } = require('../utils/timezone');
 
+const XLSX = require('xlsx');
+
 const guruWithMapelQuery = `
 SELECT 
   g.id_guru,
@@ -456,15 +458,20 @@ exports.getLineHadirPerGuru = async (req, res) => {
   try {
     const { range } = req.query;
 
+    let labels = [];
     let dateFilter = '';
+    let groupExpr = '';
+    let periodKeys = [];
 
     switch (range) {
-      case 'hari':
-        dateFilter = `p.tanggal = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`;
-        break;
-
       case 'minggu':
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '7 days'`;
+        dateFilter = `
+          p.tanggal >= DATE_TRUNC('week', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
+          AND p.tanggal < DATE_TRUNC('week', (NOW() AT TIME ZONE 'Asia/Jakarta')::date) + INTERVAL '5 days'
+        `;
+        groupExpr = `EXTRACT(DOW FROM p.tanggal)::int`; // 1=Sen, 2=Sel, ..., 5=Jum
+        labels = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'];
+        periodKeys = [1, 2, 3, 4, 5];
         break;
 
       case 'bulan':
@@ -472,31 +479,56 @@ exports.getLineHadirPerGuru = async (req, res) => {
           DATE_TRUNC('month', p.tanggal) =
           DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
         `;
+        groupExpr = `CEIL(EXTRACT(DAY FROM p.tanggal) / 7.0)::int`;
+        labels = ['Minggu 1', 'Minggu 2', 'Minggu 3', 'Minggu 4'];
+        periodKeys = [1, 2, 3, 4];
+        break;
+
+      case 'tahun':
+        dateFilter = `
+          DATE_TRUNC('year', p.tanggal) =
+          DATE_TRUNC('year', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
+        `;
+        groupExpr = `EXTRACT(MONTH FROM p.tanggal)::int`;
+        labels = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+        periodKeys = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         break;
 
       default:
-        dateFilter = `p.tanggal >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '30 days'`;
+        dateFilter = `
+          DATE_TRUNC('month', p.tanggal) =
+          DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Jakarta')::date)
+        `;
+        groupExpr = `CEIL(EXTRACT(DAY FROM p.tanggal) / 7.0)::int`;
+        labels = ['Minggu 1', 'Minggu 2', 'Minggu 3', 'Minggu 4'];
+        periodKeys = [1, 2, 3, 4];
     }
 
     const result = await pool.query(`
       SELECT
         (j.guru->>'nama_guru') AS nama_guru,
+        ${groupExpr} AS period_key,
         COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
       WHERE ${dateFilter}
-      GROUP BY nama_guru
-      ORDER BY nama_guru ASC
+      GROUP BY nama_guru, period_key
+      ORDER BY nama_guru ASC, period_key ASC
     `);
 
-    const labels = result.rows.map(r => r.nama_guru);
-    const data = result.rows.map(r => parseInt(r.total_hadir));
+    // Pivot: kelompokkan per guru
+    const guruMap = {};
+    for (const row of result.rows) {
+      if (!guruMap[row.nama_guru]) guruMap[row.nama_guru] = {};
+      guruMap[row.nama_guru][row.period_key] = parseInt(row.total_hadir);
+    }
 
-    res.json({
-      range: range || '30_hari',
-      labels,
-      data
-    });
+    const datasets = Object.entries(guruMap).map(([nama_guru, data]) => ({
+      nama_guru,
+      data: periodKeys.map(k => data[k] || 0)
+    }));
+
+    res.json({ range: range || 'bulan', labels, datasets });
 
   } catch (err) {
     console.error('LINE CHART ERROR:', err);
