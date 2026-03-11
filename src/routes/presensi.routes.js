@@ -5,6 +5,7 @@ const multer = require('multer');
 const auth = require('../middleware/auth.middleware');
 const role = require('../middleware/role.middleware');
 const controller = require('../controllers/presensi.controller');
+const isLibur = require('../middleware/kalender.middleware');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -13,7 +14,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ============================================
 
 // Get jadwal kelas hari ini
-router.get('/jadwal/today', auth, role.onlyKM, controller.getJadwalKelasHariIni);
+router.get('/jadwal/today', auth, role.onlyKM, isLibur, controller.getJadwalKelasHariIni);
 
 // Get detail jadwal by ID
 router.get('/jadwal/:id_jadwal', auth, role.onlyKM, controller.getJadwalByIdKM);
@@ -33,7 +34,7 @@ router.put('/presensi/:id/resubmit', auth, role.onlyKM, upload.single('foto'), c
 // ============================================
 
 // Create presensi (Admin)
-router.post('/', auth, upload.single('foto_bukti'), controller.createPresensi);
+router.post('/', auth, upload.single('foto_bukti'), isLibur, controller.createPresensi);
 
 // Get all presensi
 router.get('/', auth, role.onlyPiketOrAdmin, controller.getPresensi);

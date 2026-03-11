@@ -522,18 +522,20 @@ exports.updatePresensi = async (req, res) => {
 ======================= */
 exports.resubmitPresensiByKM = async (req, res) => {
   try {
+
     const idPresensi = req.params.id;
     const { status, memberikan_tugas, keterangan } = req.body;
+
     const userId = req.user.id;
     const idKelas = req.user.id_kelas;
 
-    // Ambil data presensi lama + validasi kepemilikan (via id_kelas)
     const oldData = await pool.query(
       `SELECT 
          p.id_presensi,
          p.status_approve,
          p.foto_bukti,
          p.diabsen_oleh,
+         p.rejected_at,
          j.id_kelas
        FROM presensi_guru p
        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
@@ -547,50 +549,78 @@ exports.resubmitPresensiByKM = async (req, res) => {
 
     const presensi = oldData.rows[0];
 
-    // Validasi: hanya KM dari kelas yang sama yang bisa resubmit
     if (presensi.id_kelas !== idKelas) {
-      return res.status(403).json({ message: 'Anda tidak memiliki akses ke presensi ini' });
+      return res.status(403).json({
+        message: 'Anda tidak memiliki akses ke presensi ini'
+      });
     }
 
-    // Validasi: hanya bisa resubmit kalau statusnya Rejected
     if (presensi.status_approve !== 'Rejected') {
       return res.status(400).json({
         message: `Presensi tidak bisa disubmit ulang. Status saat ini: ${presensi.status_approve}`
       });
     }
 
-    // Validasi: kalau status Hadir, foto wajib ada (file baru atau foto lama)
-    const statusBaru = status || null;
-    if (statusBaru === 'Hadir' && !req.file && !presensi.foto_bukti) {
-      return res.status(400).json({ message: 'Foto bukti wajib untuk status Hadir' });
+    // ======================
+    // VALIDASI 24 JAM
+    // ======================
+
+    if (presensi.rejected_at) {
+
+      const rejectedTime = new Date(presensi.rejected_at);
+      const now = new Date();
+
+      const diffHours = (now - rejectedTime) / (1000 * 60 * 60);
+
+      if (diffHours > 24) {
+        return res.status(400).json({
+          message: 'Batas waktu banding 24 jam sudah lewat'
+        });
+      }
+
     }
 
-    // Upload foto baru kalau ada, hapus yang lama
+    const statusBaru = status || null;
+
+    if (statusBaru === 'Hadir' && !req.file && !presensi.foto_bukti) {
+      return res.status(400).json({
+        message: 'Foto bukti wajib untuk status Hadir'
+      });
+    }
+
+    // ======================
+    // HANDLE FOTO
+    // ======================
+
     let fotoBaru = null;
+
     if (req.file) {
+
       if (presensi.foto_bukti) {
         const publicId = getPublicIdFromUrl(presensi.foto_bukti);
         await deleteImage(publicId);
       }
+
       fotoBaru = await uploadImage(req.file, 'presensi');
     }
 
     const memberikanTugasBoolean =
       memberikan_tugas === 'ya' ? true :
-        memberikan_tugas === 'tidak' ? false :
-          null;
+      memberikan_tugas === 'tidak' ? false :
+      null;
 
     const result = await pool.query(
       `UPDATE presensi_guru
-       SET status            = COALESCE($1, status),
-           foto_bukti        = COALESCE($2, foto_bukti),
-           memberikan_tugas  = COALESCE($3, memberikan_tugas),
-           catatan           = COALESCE($4, catatan),
-           status_approve    = 'Pending',
-           alasan_reject     = NULL,
-           approved_by       = NULL,
-           diabsen_oleh      = $5,
-           updated_at        = CURRENT_TIMESTAMP
+       SET 
+         status            = COALESCE($1, status),
+         foto_bukti        = COALESCE($2, foto_bukti),
+         memberikan_tugas  = COALESCE($3, memberikan_tugas),
+         catatan           = COALESCE($4, catatan),
+         status_approve    = 'Pending',
+         alasan_reject     = NULL,
+         approved_by       = NULL,
+         diabsen_oleh      = $5,
+         updated_at        = CURRENT_TIMESTAMP
        WHERE id_presensi = $6
        RETURNING *`,
       [
@@ -609,8 +639,13 @@ exports.resubmitPresensiByKM = async (req, res) => {
     });
 
   } catch (err) {
+
     console.error('❌ ERROR resubmitPresensiByKM:', err);
-    res.status(500).json({ message: 'Server error' });
+
+    res.status(500).json({
+      message: 'Server error'
+    });
+
   }
 };
 
@@ -653,51 +688,52 @@ exports.deletePresensi = async (req, res) => {
 ======================= */
 exports.approvePresensi = async (req, res) => {
   try {
-    const idPresensi = parseInt(req.params.id, 10);
-    const { status_approve, alasan_reject } = req.body;
 
-    if (isNaN(idPresensi)) {
-      return res.status(400).json({ message: 'ID presensi tidak valid' });
+    const { id } = req.params;
+    const { status, alasan } = req.body;
+
+    let query;
+    let params;
+
+    if (status === 'Rejected') {
+
+      query = `
+      UPDATE presensi_guru
+      SET
+        status_approve = 'Rejected',
+        alasan_reject = $1,
+        rejected_at = NOW(),
+        approved_by = $2,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id_presensi = $3
+      RETURNING *
+      `;
+
+      params = [alasan || null, req.user.id, id];
+
+    } else {
+
+      query = `
+      UPDATE presensi_guru
+      SET
+        status_approve = 'Approved',
+        alasan_reject = NULL,
+        approved_by = $1,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id_presensi = $2
+      RETURNING *
+      `;
+
+      params = [req.user.id, id];
     }
 
-    if (!['Approved', 'Rejected'].includes(status_approve)) {
-      return res.status(400).json({ message: 'Status tidak valid' });
-    }
-
-    // Kalau reject, alasan wajib diisi
-    if (status_approve === 'Rejected' && !alasan_reject?.trim()) {
-      return res.status(400).json({ message: 'Alasan penolakan wajib diisi' });
-    }
-
-    const approved_by = req.user.id;
-
-    const result = await pool.query(
-      `UPDATE presensi_guru
-       SET status_approve = $1,
-           alasan_reject  = $2,
-           approved_by    = $3,
-           updated_at     = CURRENT_TIMESTAMP
-       WHERE id_presensi = $4
-         AND status_approve = 'Pending'
-       RETURNING *`,
-      [
-        status_approve,
-        status_approve === 'Rejected' ? alasan_reject.trim() : null,
-        approved_by,
-        idPresensi
-      ]
-    );
-
-    if (!result.rowCount) {
-      return res.status(404).json({
-        message: 'Presensi tidak ditemukan atau sudah diproses'
-      });
-    }
+    const result = await pool.query(query, params);
 
     res.json({
-      message: 'Presensi berhasil diproses',
+      message: 'Status presensi berhasil diupdate',
       data: result.rows[0]
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
