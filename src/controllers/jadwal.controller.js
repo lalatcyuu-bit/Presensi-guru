@@ -1,4 +1,11 @@
 const pool = require('../db');
+const XLSX = require("xlsx");
+
+const parseExcel = (path) => {
+  const workbook = XLSX.readFile(path);
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sheet);
+};
 
 /* =======================
    CREATE JADWAL
@@ -308,5 +315,205 @@ exports.deleteJadwal = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.importJadwal = async (req, res) => {
+  try {
+
+    const rows = parseExcel(req.file.path);
+
+    let inserted = 0;
+    let skipped = 0;
+    let errors = [];
+
+    for (let i = 0; i < rows.length; i++) {
+
+      const row = rows[i];
+
+      const {
+        hari,
+        kelas,
+        mapel,
+        guru,
+        jam_mulai,
+        jam_selesai
+      } = row;
+
+      /* ======================
+         CEK KELAS
+      ====================== */
+
+      const kelasQ = await pool.query(
+        `SELECT id FROM kelas WHERE name ILIKE $1`,
+        [kelas]
+      );
+
+      if (!kelasQ.rows.length) {
+        errors.push(`Baris ${i+2}: kelas "${kelas}" tidak ditemukan`);
+        continue;
+      }
+
+      const id_kelas = kelasQ.rows[0].id;
+
+      /* ======================
+         CEK MAPEL
+      ====================== */
+
+      const mapelQ = await pool.query(
+        `SELECT id_mapel,nama_mapel FROM mapel WHERE nama_mapel ILIKE $1`,
+        [mapel]
+      );
+
+      if (!mapelQ.rows.length) {
+        errors.push(`Baris ${i+2}: mapel "${mapel}" tidak ditemukan`);
+        continue;
+      }
+
+      const mapelData = mapelQ.rows[0];
+
+      /* ======================
+         CEK GURU
+      ====================== */
+
+      const guruQ = await pool.query(
+        `SELECT id_guru,nama_guru,mapel FROM guru WHERE nama_guru ILIKE $1`,
+        [guru]
+      );
+
+      if (!guruQ.rows.length) {
+        errors.push(`Baris ${i+2}: guru "${guru}" tidak ditemukan`);
+        continue;
+      }
+
+      const guruData = guruQ.rows[0];
+
+      /* ======================
+         CEK GURU MENGAJAR MAPEL
+      ====================== */
+
+      const guruMapel = guruData.mapel;
+
+      if (!guruMapel.includes(mapelData.id_mapel)) {
+        errors.push(`Baris ${i+2}: guru tidak mengajar mapel ini`);
+        continue;
+      }
+
+      /* ======================
+         CEK BENTROK KELAS
+      ====================== */
+
+      const bentrokKelas = await pool.query(
+        `
+        SELECT 1
+        FROM jadwal
+        WHERE hari=$1
+        AND id_kelas=$2
+        AND (jam_mulai < $4 AND jam_selesai > $3)
+        `,
+        [hari, id_kelas, jam_mulai, jam_selesai]
+      );
+
+      if (bentrokKelas.rows.length) {
+        errors.push(`Baris ${i+2}: jadwal kelas bentrok`);
+        continue;
+      }
+
+      /* ======================
+         CEK BENTROK GURU
+      ====================== */
+
+      const bentrokGuru = await pool.query(
+        `
+        SELECT 1
+        FROM jadwal
+        WHERE hari=$1
+        AND (guru->>'id_guru')::int = $2
+        AND (jam_mulai < $4 AND jam_selesai > $3)
+        `,
+        [hari, guruData.id_guru, jam_mulai, jam_selesai]
+      );
+
+      if (bentrokGuru.rows.length) {
+        errors.push(`Baris ${i+2}: guru bentrok jadwal`);
+        continue;
+      }
+
+      /* ======================
+         CEK DUPLICATE
+      ====================== */
+
+      const duplicate = await pool.query(
+        `
+        SELECT 1
+        FROM jadwal
+        WHERE hari=$1
+        AND id_kelas=$2
+        AND jam_mulai=$3
+        AND jam_selesai=$4
+        AND (guru->>'id_guru')::int=$5
+        `,
+        [
+          hari,
+          id_kelas,
+          jam_mulai,
+          jam_selesai,
+          guruData.id_guru
+        ]
+      );
+
+      if (duplicate.rows.length) {
+        skipped++;
+        continue;
+      }
+
+      /* ======================
+         BENTUK JSON GURU
+      ====================== */
+
+      const guruJson = {
+        id_guru: guruData.id_guru,
+        nama_guru: guruData.nama_guru,
+        mapel: {
+          id_mapel: mapelData.id_mapel,
+          nama_mapel: mapelData.nama_mapel
+        }
+      };
+
+      /* ======================
+         INSERT
+      ====================== */
+
+      await pool.query(
+        `
+        INSERT INTO jadwal
+        (id_kelas,hari,jam_mulai,jam_selesai,guru)
+        VALUES ($1,$2,$3,$4,$5)
+        `,
+        [
+          id_kelas,
+          hari,
+          jam_mulai,
+          jam_selesai,
+          JSON.stringify(guruJson)
+        ]
+      );
+
+      inserted++;
+
+    }
+
+    res.json({
+      message: "Import selesai",
+      inserted,
+      skipped,
+      errors
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Server error"
+    });
   }
 };
