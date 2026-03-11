@@ -27,6 +27,7 @@ app.use('/jadwal', require('./routes/jadwal.routes'));
 app.use('/presensi', require('./routes/presensi.routes'));
 app.use('/kelas', require('./routes/kelas.routes'));
 app.use('/km', require('./routes/presensi.routes'));
+app.use('/kalender', require('./routes/kalender.routes'));
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
