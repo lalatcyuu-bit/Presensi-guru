@@ -1,1 +1,2 @@
 ALTER TABLE presensi_guru ADD COLUMN IF NOT EXISTS alasan_reject TEXT;
+ALTER TABLE presensi_guru ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;

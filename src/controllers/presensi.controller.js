@@ -52,7 +52,8 @@ exports.getJadwalKelasHariIni = async (req, res) => {
         p.tanggal,
         p.memberikan_tugas,
         p.catatan,
-        p.alasan_reject
+        p.alasan_reject,
+        p.rejected_at
       FROM jadwal j
       JOIN kelas k ON k.id = j.id_kelas
       LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
@@ -108,7 +109,8 @@ exports.getJadwalKelasHariIni = async (req, res) => {
           status_kehadiran: row.status,
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
-          alasan_reject: row.alasan_reject
+          alasan_reject: row.alasan_reject,
+          rejected_at: row.rejected_at
         } : null,
         duration: null
       };
@@ -690,7 +692,7 @@ exports.approvePresensi = async (req, res) => {
   try {
 
     const { id } = req.params;
-    const { status, alasan } = req.body;
+    const { status_approve: status, alasan_reject: alasan } = req.body;
 
     let query;
     let params;
@@ -800,6 +802,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
             WHEN 5 THEN 'Jumat'
             WHEN 6 THEN 'Sabtu'
           END
+          AND gs::date >= j.created_at::date
         JOIN kelas k ON k.id = j.id_kelas
         LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       )
