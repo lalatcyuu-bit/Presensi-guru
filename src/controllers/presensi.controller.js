@@ -857,6 +857,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
          p.catatan,
          p.status_approve,
          p.alasan_reject,
+         p.rejected_at,
          p.created_at
        FROM slots s
        LEFT JOIN presensi_guru p
@@ -891,7 +892,8 @@ exports.getRiwayatPresensiKM = async (req, res) => {
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
           status_approve: row.status_approve,
-          alasan_reject: row.alasan_reject
+          alasan_reject: row.alasan_reject,
+          rejected_at: row.rejected_at
         } : null,
         kelas: {
           name: row.kelas_name,
