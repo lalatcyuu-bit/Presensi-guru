@@ -204,6 +204,7 @@ exports.getPresensiByIdKM = async (req, res) => {
   try {
     const idPresensi = req.params.id;
     const { id_kelas } = req.user;
+    const userId = req.user.id;
 
     const result = await pool.query(
       `SELECT 
@@ -219,8 +220,9 @@ exports.getPresensiByIdKM = async (req, res) => {
        FROM presensi_guru p
        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
        WHERE p.id_presensi = $1
-         AND j.id_kelas = $2`,
-      [idPresensi, id_kelas]
+         AND j.id_kelas = $2
+         AND p.diabsen_oleh = $3`,
+      [idPresensi, id_kelas, userId]
     );
 
     if (!result.rowCount) {
@@ -233,7 +235,6 @@ exports.getPresensiByIdKM = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 /* =======================
    CREATE PRESENSI BY KM
 ======================= */
@@ -533,16 +534,17 @@ exports.resubmitPresensiByKM = async (req, res) => {
 
     const oldData = await pool.query(
       `SELECT 
-         p.id_presensi,
-         p.status_approve,
-         p.foto_bukti,
-         p.diabsen_oleh,
-         p.rejected_at,
-         j.id_kelas
-       FROM presensi_guru p
-       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-       WHERE p.id_presensi = $1`,
-      [idPresensi]
+     p.id_presensi,
+     p.status_approve,
+     p.foto_bukti,
+     p.diabsen_oleh,
+     p.rejected_at,
+     j.id_kelas
+   FROM presensi_guru p
+   JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+   WHERE p.id_presensi = $1
+     AND p.diabsen_oleh = $2`,
+      [idPresensi, userId]
     );
 
     if (!oldData.rowCount) {
