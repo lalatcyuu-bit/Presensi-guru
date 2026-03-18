@@ -1,4 +1,17 @@
 const pool = require('../db');
+const { getWIBDate, getWIBDayName } = require('../utils/timezone');
+
+// Helper SELECT columns — pakai TO_CHAR biar pg driver tidak konversi ke JS Date/UTC
+const KALENDER_COLUMNS = `
+  id,
+  TO_CHAR(tanggal_mulai, 'YYYY-MM-DD')   AS tanggal_mulai,
+  TO_CHAR(tanggal_selesai, 'YYYY-MM-DD') AS tanggal_selesai,
+  TO_CHAR(jam_mulai, 'HH24:MI')          AS jam_mulai,
+  TO_CHAR(jam_selesai, 'HH24:MI')        AS jam_selesai,
+  tipe,
+  keterangan,
+  created_at
+`;
 
 /*
 ========================
@@ -15,9 +28,9 @@ exports.createKalender = async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO kalender_akademik
-      (tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai, tipe, keterangan)
-      VALUES ($1,$2,$3,$4,$5,$6)
-      RETURNING *`,
+        (tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai, tipe, keterangan)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING ${KALENDER_COLUMNS}`,
       [
         tanggal_mulai,
         tanggal_selesai,
@@ -47,9 +60,8 @@ GET LIST KALENDER
 */
 exports.getKalender = async (req, res) => {
   try {
-
     const result = await pool.query(`
-      SELECT *
+      SELECT ${KALENDER_COLUMNS}
       FROM kalender_akademik
       ORDER BY tanggal_mulai ASC
     `);
@@ -73,23 +85,20 @@ UPDATE KALENDER
 */
 exports.updateKalender = async (req, res) => {
   try {
-
     const { id } = req.params;
     const { tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai, tipe, keterangan } = req.body;
 
     const result = await pool.query(
-      `
-      UPDATE kalender_akademik
-      SET
-        tanggal_mulai = $1,
-        tanggal_selesai = $2,
-        jam_mulai = $3,
-        jam_selesai = $4,
-        tipe = $5,
-        keterangan = $6
-      WHERE id = $7
-      RETURNING *
-      `,
+      `UPDATE kalender_akademik
+       SET
+         tanggal_mulai  = $1,
+         tanggal_selesai = $2,
+         jam_mulai      = $3,
+         jam_selesai    = $4,
+         tipe           = $5,
+         keterangan     = $6
+       WHERE id = $7
+       RETURNING ${KALENDER_COLUMNS}`,
       [
         tanggal_mulai,
         tanggal_selesai,
@@ -124,7 +133,6 @@ DELETE KALENDER
 */
 exports.deleteKalender = async (req, res) => {
   try {
-
     const result = await pool.query(
       `DELETE FROM kalender_akademik WHERE id = $1`,
       [req.params.id]
@@ -150,11 +158,9 @@ CEK HARI INI LIBUR
 */
 exports.checkLiburHariIni = async (req, res) => {
   try {
+    const hariIni = getWIBDayName(); // ✅ WIB, bukan new Date().getDay()
 
-    const today = new Date();
-    const day = today.getDay(); // 0 Minggu, 6 Sabtu
-
-    if (day === 0 || day === 6) {
+    if (hariIni === 'Sabtu' || hariIni === 'Minggu') {
       return res.json({
         libur: true,
         tipe: 'weekend',
@@ -162,12 +168,13 @@ exports.checkLiburHariIni = async (req, res) => {
       });
     }
 
+    const today = getWIBDate(); // ✅ WIB, bukan toISOString().slice(0,10)
+
     const result = await pool.query(
-      `
-      SELECT *
-      FROM kalender_akademik
-      WHERE CURRENT_DATE BETWEEN tanggal_mulai AND tanggal_selesai
-      `
+      `SELECT ${KALENDER_COLUMNS}
+       FROM kalender_akademik
+       WHERE $1::date BETWEEN tanggal_mulai AND tanggal_selesai`,
+      [today]
     );
 
     if (result.rows.length > 0) {
@@ -178,9 +185,7 @@ exports.checkLiburHariIni = async (req, res) => {
       });
     }
 
-    res.json({
-      libur: false
-    });
+    res.json({ libur: false });
 
   } catch (err) {
     console.error(err);
