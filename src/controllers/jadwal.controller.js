@@ -99,6 +99,7 @@ exports.createJadwal = async (req, res) => {
    Query params:
    - ?hari=      → filter by hari (Senin, Selasa, ...)
    - ?id_kelas=  → filter by kelas
+   - ?all=true   → ambil semua tanpa pagination
    - ?page=      → halaman (default 1)
    - ?limit=     → item per halaman (default 10)
 ======================= */
@@ -107,9 +108,6 @@ exports.getJadwal = async (req, res) => {
 
     const hari = req.query.hari || null;
     const id_kelas = req.query.id_kelas ? parseInt(req.query.id_kelas, 10) : null;
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
-    const offset = (page - 1) * limit;
 
     const params = [];
     const where = [];
@@ -126,36 +124,7 @@ exports.getJadwal = async (req, res) => {
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
-    // total data
-    const countResult = await pool.query(
-      `SELECT COUNT(*) AS total
-       FROM jadwal j
-       ${whereClause}`,
-      params
-    );
-
-    const total = parseInt(countResult.rows[0].total, 10);
-    const totalPages = Math.ceil(total / limit);
-
-    params.push(limit);
-    const limitIndex = params.length;
-    params.push(offset);
-    const offsetIndex = params.length;
-
-    const result = await pool.query(
-      `
-      SELECT
-        j.id_jadwal,
-        j.id_kelas,
-        j.hari,
-        j.jam_mulai,
-        j.jam_selesai,
-        j.guru,
-        k.name AS nama_kelas
-      FROM jadwal j
-      JOIN kelas k ON k.id = j.id_kelas
-      ${whereClause}
-
+    const orderClause = `
       ORDER BY
         k.name ASC,
         CASE j.hari
@@ -168,9 +137,54 @@ exports.getJadwal = async (req, res) => {
           WHEN 'Minggu' THEN 7
         END,
         j.jam_mulai ASC
+    `;
 
-      LIMIT $${limitIndex} OFFSET $${offsetIndex}
-      `,
+    const selectQuery = `
+      SELECT
+        j.id_jadwal,
+        j.id_kelas,
+        j.hari,
+        j.jam_mulai,
+        j.jam_selesai,
+        j.guru,
+        k.name AS nama_kelas
+      FROM jadwal j
+      JOIN kelas k ON k.id = j.id_kelas
+      ${whereClause}
+    `;
+
+    // Ambil semua tanpa pagination
+    if (req.query.all === 'true') {
+      const result = await pool.query(
+        `${selectQuery} ${orderClause}`,
+        params
+      );
+      return res.json({
+        message: 'Data jadwal berhasil diambil',
+        data: result.rows
+      });
+    }
+
+    // Dengan pagination
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+    const offset = (page - 1) * limit;
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) AS total FROM jadwal j ${whereClause}`,
+      params
+    );
+
+    const total = parseInt(countResult.rows[0].total, 10);
+    const totalPages = Math.ceil(total / limit);
+
+    params.push(limit);
+    const limitIndex = params.length;
+    params.push(offset);
+    const offsetIndex = params.length;
+
+    const result = await pool.query(
+      `${selectQuery} ${orderClause} LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
       params
     );
 
