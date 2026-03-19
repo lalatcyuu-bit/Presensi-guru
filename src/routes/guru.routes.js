@@ -17,6 +17,9 @@ router.get('/line', auth, role.onlyAdmin, guruController.getLineHadirPerGuru);
 router.get('/tren', auth, role.onlyAdmin, guruController.getTrenKehadiranKeseluruhan); // NEW
 router.get('/top-hadir', auth, role.onlyAdmin, guruController.getTopGuruHadir);        // NEW
 router.get('/top-tidak-hadir', auth, role.onlyAdmin, guruController.getTopGuruTidakHadir);
+router.get('/unpresensi-stats', auth, role.onlyAdmin, guruController.getUnpresensiStats);
+router.get('/summary-stats', auth, role.onlyAdmin, guruController.getSummaryStats);
+router.get('/performa-guru', auth, role.onlyAdmin, guruController.getPerformaGuru);
 router.get('/:id', auth, role.onlyAdmin, guruController.getGuruById);
 router.put('/:id', auth, role.onlyAdmin, guruController.updateGuru);
 router.delete('/:id', auth, role.onlyAdmin, guruController.deleteGuru);
