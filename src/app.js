@@ -7,6 +7,8 @@ app.use(cors({
   origin: [
     'https://bv8mb4zp-3000.asse.devtunnels.ms',
     'http://localhost:3000',
+    'http://localhost:8881',
+    'http://103.10.60.91:8881',
     'https://bgdr3s45-3000.asse.devtunnels.ms',
     'http://192.168.100.22:3000'
   ],
@@ -25,6 +27,7 @@ app.use('/jadwal', require('./routes/jadwal.routes'));
 app.use('/presensi', require('./routes/presensi.routes'));
 app.use('/kelas', require('./routes/kelas.routes'));
 app.use('/km', require('./routes/presensi.routes'));
+app.use('/kalender', require('./routes/kalender.routes'));
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {

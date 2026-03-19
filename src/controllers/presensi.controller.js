@@ -52,7 +52,8 @@ exports.getJadwalKelasHariIni = async (req, res) => {
         p.tanggal,
         p.memberikan_tugas,
         p.catatan,
-        p.alasan_reject
+        p.alasan_reject,
+        p.rejected_at
       FROM jadwal j
       JOIN kelas k ON k.id = j.id_kelas
       LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
@@ -108,7 +109,8 @@ exports.getJadwalKelasHariIni = async (req, res) => {
           status_kehadiran: row.status,
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
-          alasan_reject: row.alasan_reject
+          alasan_reject: row.alasan_reject,
+          rejected_at: row.rejected_at
         } : null,
         duration: null
       };
@@ -202,6 +204,7 @@ exports.getPresensiByIdKM = async (req, res) => {
   try {
     const idPresensi = req.params.id;
     const { id_kelas } = req.user;
+    const userId = req.user.id;
 
     const result = await pool.query(
       `SELECT 
@@ -217,8 +220,9 @@ exports.getPresensiByIdKM = async (req, res) => {
        FROM presensi_guru p
        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
        WHERE p.id_presensi = $1
-         AND j.id_kelas = $2`,
-      [idPresensi, id_kelas]
+         AND j.id_kelas = $2
+         AND p.diabsen_oleh = $3`,
+      [idPresensi, id_kelas, userId]
     );
 
     if (!result.rowCount) {
@@ -231,7 +235,6 @@ exports.getPresensiByIdKM = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 /* =======================
    CREATE PRESENSI BY KM
 ======================= */
@@ -522,23 +525,26 @@ exports.updatePresensi = async (req, res) => {
 ======================= */
 exports.resubmitPresensiByKM = async (req, res) => {
   try {
+
     const idPresensi = req.params.id;
     const { status, memberikan_tugas, keterangan } = req.body;
+
     const userId = req.user.id;
     const idKelas = req.user.id_kelas;
 
-    // Ambil data presensi lama + validasi kepemilikan (via id_kelas)
     const oldData = await pool.query(
       `SELECT 
-         p.id_presensi,
-         p.status_approve,
-         p.foto_bukti,
-         p.diabsen_oleh,
-         j.id_kelas
-       FROM presensi_guru p
-       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-       WHERE p.id_presensi = $1`,
-      [idPresensi]
+     p.id_presensi,
+     p.status_approve,
+     p.foto_bukti,
+     p.diabsen_oleh,
+     p.rejected_at,
+     j.id_kelas
+   FROM presensi_guru p
+   JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+   WHERE p.id_presensi = $1
+     AND p.diabsen_oleh = $2`,
+      [idPresensi, userId]
     );
 
     if (!oldData.rowCount) {
@@ -547,50 +553,78 @@ exports.resubmitPresensiByKM = async (req, res) => {
 
     const presensi = oldData.rows[0];
 
-    // Validasi: hanya KM dari kelas yang sama yang bisa resubmit
     if (presensi.id_kelas !== idKelas) {
-      return res.status(403).json({ message: 'Anda tidak memiliki akses ke presensi ini' });
+      return res.status(403).json({
+        message: 'Anda tidak memiliki akses ke presensi ini'
+      });
     }
 
-    // Validasi: hanya bisa resubmit kalau statusnya Rejected
     if (presensi.status_approve !== 'Rejected') {
       return res.status(400).json({
         message: `Presensi tidak bisa disubmit ulang. Status saat ini: ${presensi.status_approve}`
       });
     }
 
-    // Validasi: kalau status Hadir, foto wajib ada (file baru atau foto lama)
-    const statusBaru = status || null;
-    if (statusBaru === 'Hadir' && !req.file && !presensi.foto_bukti) {
-      return res.status(400).json({ message: 'Foto bukti wajib untuk status Hadir' });
+    // ======================
+    // VALIDASI 24 JAM
+    // ======================
+
+    if (presensi.rejected_at) {
+
+      const rejectedTime = new Date(presensi.rejected_at);
+      const now = new Date();
+
+      const diffHours = (now - rejectedTime) / (1000 * 60 * 60);
+
+      if (diffHours > 24) {
+        return res.status(400).json({
+          message: 'Batas waktu banding 24 jam sudah lewat'
+        });
+      }
+
     }
 
-    // Upload foto baru kalau ada, hapus yang lama
+    const statusBaru = status || null;
+
+    if (statusBaru === 'Hadir' && !req.file && !presensi.foto_bukti) {
+      return res.status(400).json({
+        message: 'Foto bukti wajib untuk status Hadir'
+      });
+    }
+
+    // ======================
+    // HANDLE FOTO
+    // ======================
+
     let fotoBaru = null;
+
     if (req.file) {
+
       if (presensi.foto_bukti) {
         const publicId = getPublicIdFromUrl(presensi.foto_bukti);
         await deleteImage(publicId);
       }
+
       fotoBaru = await uploadImage(req.file, 'presensi');
     }
 
     const memberikanTugasBoolean =
       memberikan_tugas === 'ya' ? true :
-        memberikan_tugas === 'tidak' ? false :
-          null;
+      memberikan_tugas === 'tidak' ? false :
+      null;
 
     const result = await pool.query(
       `UPDATE presensi_guru
-       SET status            = COALESCE($1, status),
-           foto_bukti        = COALESCE($2, foto_bukti),
-           memberikan_tugas  = COALESCE($3, memberikan_tugas),
-           catatan           = COALESCE($4, catatan),
-           status_approve    = 'Pending',
-           alasan_reject     = NULL,
-           approved_by       = NULL,
-           diabsen_oleh      = $5,
-           updated_at        = CURRENT_TIMESTAMP
+       SET 
+         status            = COALESCE($1, status),
+         foto_bukti        = COALESCE($2, foto_bukti),
+         memberikan_tugas  = COALESCE($3, memberikan_tugas),
+         catatan           = COALESCE($4, catatan),
+         status_approve    = 'Pending',
+         alasan_reject     = NULL,
+         approved_by       = NULL,
+         diabsen_oleh      = $5,
+         updated_at        = CURRENT_TIMESTAMP
        WHERE id_presensi = $6
        RETURNING *`,
       [
@@ -609,8 +643,13 @@ exports.resubmitPresensiByKM = async (req, res) => {
     });
 
   } catch (err) {
+
     console.error('❌ ERROR resubmitPresensiByKM:', err);
-    res.status(500).json({ message: 'Server error' });
+
+    res.status(500).json({
+      message: 'Server error'
+    });
+
   }
 };
 
@@ -653,51 +692,52 @@ exports.deletePresensi = async (req, res) => {
 ======================= */
 exports.approvePresensi = async (req, res) => {
   try {
-    const idPresensi = parseInt(req.params.id, 10);
-    const { status_approve, alasan_reject } = req.body;
 
-    if (isNaN(idPresensi)) {
-      return res.status(400).json({ message: 'ID presensi tidak valid' });
+    const { id } = req.params;
+    const { status_approve: status, alasan_reject: alasan } = req.body;
+
+    let query;
+    let params;
+
+    if (status === 'Rejected') {
+
+      query = `
+      UPDATE presensi_guru
+      SET
+        status_approve = 'Rejected',
+        alasan_reject = $1,
+        rejected_at = NOW(),
+        approved_by = $2,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id_presensi = $3
+      RETURNING *
+      `;
+
+      params = [alasan || null, req.user.id, id];
+
+    } else {
+
+      query = `
+      UPDATE presensi_guru
+      SET
+        status_approve = 'Approved',
+        alasan_reject = NULL,
+        approved_by = $1,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id_presensi = $2
+      RETURNING *
+      `;
+
+      params = [req.user.id, id];
     }
 
-    if (!['Approved', 'Rejected'].includes(status_approve)) {
-      return res.status(400).json({ message: 'Status tidak valid' });
-    }
-
-    // Kalau reject, alasan wajib diisi
-    if (status_approve === 'Rejected' && !alasan_reject?.trim()) {
-      return res.status(400).json({ message: 'Alasan penolakan wajib diisi' });
-    }
-
-    const approved_by = req.user.id;
-
-    const result = await pool.query(
-      `UPDATE presensi_guru
-       SET status_approve = $1,
-           alasan_reject  = $2,
-           approved_by    = $3,
-           updated_at     = CURRENT_TIMESTAMP
-       WHERE id_presensi = $4
-         AND status_approve = 'Pending'
-       RETURNING *`,
-      [
-        status_approve,
-        status_approve === 'Rejected' ? alasan_reject.trim() : null,
-        approved_by,
-        idPresensi
-      ]
-    );
-
-    if (!result.rowCount) {
-      return res.status(404).json({
-        message: 'Presensi tidak ditemukan atau sudah diproses'
-      });
-    }
+    const result = await pool.query(query, params);
 
     res.json({
-      message: 'Presensi berhasil diproses',
+      message: 'Status presensi berhasil diupdate',
       data: result.rows[0]
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -764,6 +804,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
             WHEN 5 THEN 'Jumat'
             WHEN 6 THEN 'Sabtu'
           END
+          AND gs::date >= j.created_at::date
         JOIN kelas k ON k.id = j.id_kelas
         LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       )
@@ -818,6 +859,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
          p.catatan,
          p.status_approve,
          p.alasan_reject,
+         p.rejected_at,
          p.created_at
        FROM slots s
        LEFT JOIN presensi_guru p
@@ -852,7 +894,8 @@ exports.getRiwayatPresensiKM = async (req, res) => {
           memberikan_tugas: row.memberikan_tugas,
           catatan: row.catatan,
           status_approve: row.status_approve,
-          alasan_reject: row.alasan_reject
+          alasan_reject: row.alasan_reject,
+          rejected_at: row.rejected_at
         } : null,
         kelas: {
           name: row.kelas_name,
@@ -883,6 +926,62 @@ exports.getRiwayatPresensiKM = async (req, res) => {
 
   } catch (err) {
     console.error('GET RIWAYAT KM ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   DASHBOARD HARI INI
+   - Guru Hadir
+   - Guru Tidak Hadir
+   - Belum Presensi
+======================= */
+exports.getDashboardToday = async (req, res) => {
+  try {
+    const today = getWIBDate(); // format YYYY-MM-DD
+
+    const dayNames = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+    const dateObj = new Date(today + 'T00:00:00+07:00');
+    const todayName = dayNames[dateObj.getDay()];
+
+    const result = await pool.query(`
+      SELECT
+        COUNT(j.id_jadwal) FILTER (
+          WHERE p.status = 'Hadir'
+        ) AS guru_hadir,
+
+        COUNT(j.id_jadwal) FILTER (
+          WHERE p.status = 'Tidak Hadir'
+        ) AS guru_tidak_hadir,
+
+        COUNT(j.id_jadwal) FILTER (
+          WHERE p.id_presensi IS NULL
+        ) AS belum_presensi,
+
+        COUNT(j.id_jadwal) AS total_jadwal
+
+      FROM jadwal j
+      LEFT JOIN presensi_guru p
+        ON p.id_jadwal = j.id_jadwal
+        AND p.tanggal = $1
+      WHERE j.hari = $2
+    `, [today, todayName]);
+
+    const data = result.rows[0];
+
+    res.json({
+      tanggal: today,
+      hari: todayName,
+      summary: {
+        total_jadwal: parseInt(data.total_jadwal),
+        guru_hadir: parseInt(data.guru_hadir),
+        guru_tidak_hadir: parseInt(data.guru_tidak_hadir),
+        belum_presensi: parseInt(data.belum_presensi)
+      }
+    });
+
+  } catch (err) {
+    console.error('DASHBOARD ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

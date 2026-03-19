@@ -8,7 +8,7 @@
 CREATE TABLE IF NOT EXISTS guru (
     id_guru SERIAL PRIMARY KEY,
     nama_guru VARCHAR(255) NOT NULL,
-    nip VARCHAR(50),
+    nip VARCHAR(50) UNIQUE,
     mapel JSONB NOT NULL, -- Format: [1, 2, 3] (array of mapel IDs)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

@@ -73,7 +73,7 @@ exports.getKelas = async (req, res) => {
 
         if (search) {
             params.push(`%${search}%`);
-            where.push(`k.name ILIKE $${params.length}`);
+            where.push(`(k.name ILIKE $${params.length} OR j.nama_jurusan ILIKE $${params.length})`);
         }
 
         if (tingkat) {
@@ -94,18 +94,20 @@ exports.getKelas = async (req, res) => {
             ${whereClause}
         `;
 
+        const selectFields = `
+            k.id,
+            k.name,
+            k.tingkat,
+            k.id_jurusan,
+            j.nama_jurusan,
+            j.kode_jurusan,
+            (SELECT COUNT(*) FROM jadwal WHERE id_kelas = k.id) AS schedule_count
+        `;
+
         // Ambil semua tanpa pagination (untuk dropdown)
         if (req.query.all === 'true') {
             const result = await pool.query(
-                `SELECT
-                    k.id,
-                    k.name,
-                    k.tingkat,
-                    k.id_jurusan,
-                    j.nama_jurusan,
-                    j.kode_jurusan
-                 ${baseFrom}
-                 ORDER BY k.tingkat ASC, k.name ASC`,
+                `SELECT ${selectFields} ${baseFrom} ORDER BY k.tingkat ASC, k.name ASC`,
                 params
             );
             return res.json({ data: result.rows });
@@ -118,23 +120,16 @@ exports.getKelas = async (req, res) => {
         );
         const total = parseInt(countResult.rows[0].total, 10);
         const totalPages = Math.ceil(total / limit);
+        const hasMore = page < totalPages;
 
-        // Ambil data dengan pagination
         params.push(limit);
         const limitIndex = params.length;
         params.push(offset);
         const offsetIndex = params.length;
 
         const result = await pool.query(
-            `SELECT
-                k.id,
-                k.name,
-                k.tingkat,
-                k.id_jurusan,
-                j.nama_jurusan,
-                j.kode_jurusan
-             ${baseFrom}
-             ORDER BY k.id DESC
+            `SELECT ${selectFields} ${baseFrom}
+             ORDER BY k.tingkat ASC, k.name ASC
              LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
             params
         );
@@ -145,7 +140,8 @@ exports.getKelas = async (req, res) => {
                 page,
                 perPage: limit,
                 totalItems: total,
-                totalPages
+                totalPages,
+                hasMore
             }
         });
     } catch (err) {
