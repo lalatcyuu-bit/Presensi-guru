@@ -17,10 +17,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/jadwal/today', auth, role.onlyKM, isLibur, controller.getJadwalKelasHariIni);
 
 // Get detail jadwal by ID
-router.get('/jadwal/:id_jadwal', auth, role.onlyKM, controller.getJadwalByIdKM);
+router.get('/jadwal/:id_jadwal', auth, role.onlyKM, isLibur, controller.getJadwalByIdKM); // ← FIX: tambah isLibur
 
 // Create presensi oleh KM
-router.post('/presensi', auth, role.onlyKM, upload.single('foto'), controller.createPresensiByKM);
+router.post('/presensi', auth, role.onlyKM, isLibur, upload.single('foto'), controller.createPresensiByKM); // ← FIX: tambah isLibur
 
 // Get presensi by ID untuk KM (dipakai saat resubmit untuk pre-fill data)
 // PENTING: route ini harus SEBELUM /presensi/:id/resubmit agar tidak bentrok

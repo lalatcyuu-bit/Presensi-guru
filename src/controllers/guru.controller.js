@@ -391,6 +391,17 @@ exports.getPerformaGuru = async (req, res) => {
           WHEN 6 THEN 'Sabtu'
         END
         AND gs::date >= j.created_at::date
+        -- Exclude slot yang terkena kalender akademik
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              -- Tidak ada jam = seharian
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              -- Ada jam = cek overlap dengan slot jadwal
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
         ${kelasFilter}
       )
       SELECT
@@ -520,6 +531,17 @@ exports.getUnpresensiStats = async (req, res) => {
           WHEN 6 THEN 'Sabtu'
         END
         AND gs::date >= j.created_at::date
+        -- Exclude slot yang terkena kalender akademik
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              -- Tidak ada jam = seharian
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              -- Ada jam = cek overlap dengan slot jadwal
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
         ${kelasFilter}
       )
       SELECT COUNT(*) AS total_belum
