@@ -14,8 +14,13 @@ module.exports = async function isLibur(req, res, next) {
     const tanggal = getWIBDate();
     const jamSekarang = getWIBTimeString(); // format HH:MM:SS
 
+    // FIX #6: pakai TO_CHAR agar pg driver tidak konversi TIME ke object/UTC
     const result = await pool.query(
-      `SELECT tipe, jam_mulai, jam_selesai, keterangan
+      `SELECT
+        tipe,
+        TO_CHAR(jam_mulai,  'HH24:MI:SS') AS jam_mulai,
+        TO_CHAR(jam_selesai,'HH24:MI:SS') AS jam_selesai,
+        keterangan
        FROM kalender_akademik
        WHERE $1::date BETWEEN tanggal_mulai AND tanggal_selesai`,
       [tanggal]

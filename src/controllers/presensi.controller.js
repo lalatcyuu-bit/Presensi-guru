@@ -22,6 +22,8 @@ exports.getJadwalKelasHariIni = async (req, res) => {
 
     const wibInfo = getWIBInfo();
 
+    // FIX #3: tambah filter created_at agar jadwal yang baru dibuat hari ini
+    // tidak langsung muncul — konsisten dengan getRiwayatPresensiKM & getPerformaGuru
     const result = await pool.query(
       `SELECT 
         j.id_jadwal,
@@ -48,6 +50,7 @@ exports.getJadwalKelasHariIni = async (req, res) => {
         AND p.tanggal = $1
       WHERE j.id_kelas = $2 
         AND j.hari = $3
+        AND j.created_at::date <= $1
         -- Exclude jadwal yang terkena kalender akademik
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
@@ -233,19 +236,21 @@ exports.createPresensiByKM = async (req, res) => {
     const { id_jadwal, status, memberikan_tugas, keterangan } = req.body;
 
     const diabsen_oleh = req.user.id;
+    const id_kelas_user = req.user.id_kelas;
     const tanggalHariIni = getWIBDate();
 
     if (!id_jadwal || !status) {
       return res.status(400).json({ message: 'Data tidak lengkap' });
     }
 
+    // FIX #1: validasi id_kelas agar KM tidak bisa presensi jadwal kelas lain
     const jadwalResult = await pool.query(
-      `SELECT jam_mulai, jam_selesai FROM jadwal WHERE id_jadwal = $1`,
-      [id_jadwal]
+      `SELECT jam_mulai, jam_selesai FROM jadwal WHERE id_jadwal = $1 AND id_kelas = $2`,
+      [id_jadwal, id_kelas_user]
     );
 
     if (jadwalResult.rowCount === 0) {
-      return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+      return res.status(404).json({ message: 'Jadwal tidak ditemukan atau bukan milik kelas Anda' });
     }
 
     const { jam_mulai, jam_selesai } = jadwalResult.rows[0];
@@ -272,8 +277,9 @@ exports.createPresensiByKM = async (req, res) => {
       fotoLink = await uploadImage(req.file, 'presensi');
     }
 
-    const memberikanTugasBoolean = memberikan_tugas === 'ya' ? true :
-      memberikan_tugas === 'tidak' ? false : null;
+    const memberikanTugasBoolean =
+      memberikan_tugas === 'ya' ? true :
+        memberikan_tugas === 'tidak' ? false : null;
 
     const result = await pool.query(
       `INSERT INTO presensi_guru
@@ -457,10 +463,10 @@ exports.updatePresensi = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE presensi_guru
-       SET status = COALESCE($1, status),
-           catatan = COALESCE($2, catatan),
-           foto_bukti = COALESCE($3, foto_bukti),
-           updated_at = CURRENT_TIMESTAMP
+       SET status    = COALESCE($1, status),
+           catatan   = COALESCE($2, catatan),
+           foto_bukti= COALESCE($3, foto_bukti),
+           updated_at= CURRENT_TIMESTAMP
        WHERE id_presensi = $4
          AND status_approve = 'Pending'
        RETURNING *`,
@@ -554,15 +560,15 @@ exports.resubmitPresensiByKM = async (req, res) => {
     const result = await pool.query(
       `UPDATE presensi_guru
        SET 
-         status            = COALESCE($1, status),
-         foto_bukti        = COALESCE($2, foto_bukti),
-         memberikan_tugas  = COALESCE($3, memberikan_tugas),
-         catatan           = COALESCE($4, catatan),
-         status_approve    = 'Pending',
-         alasan_reject     = NULL,
-         approved_by       = NULL,
-         diabsen_oleh      = $5,
-         updated_at        = CURRENT_TIMESTAMP
+         status           = COALESCE($1, status),
+         foto_bukti       = COALESCE($2, foto_bukti),
+         memberikan_tugas = COALESCE($3, memberikan_tugas),
+         catatan          = COALESCE($4, catatan),
+         status_approve   = 'Pending',
+         alasan_reject    = NULL,
+         approved_by      = NULL,
+         diabsen_oleh     = $5,
+         updated_at       = CURRENT_TIMESTAMP
        WHERE id_presensi = $6
        RETURNING *`,
       [statusBaru, fotoBaru, memberikanTugasBoolean, keterangan || null, userId, idPresensi]
@@ -624,10 +630,10 @@ exports.approvePresensi = async (req, res) => {
         UPDATE presensi_guru
         SET
           status_approve = 'Rejected',
-          alasan_reject = $1,
-          rejected_at = NOW(),
-          approved_by = $2,
-          updated_at = CURRENT_TIMESTAMP
+          alasan_reject  = $1,
+          rejected_at    = NOW(),
+          approved_by    = $2,
+          updated_at     = CURRENT_TIMESTAMP
         WHERE id_presensi = $3
         RETURNING *
       `;
@@ -637,9 +643,9 @@ exports.approvePresensi = async (req, res) => {
         UPDATE presensi_guru
         SET
           status_approve = 'Approved',
-          alasan_reject = NULL,
-          approved_by = $1,
-          updated_at = CURRENT_TIMESTAMP
+          alasan_reject  = NULL,
+          approved_by    = $1,
+          updated_at     = CURRENT_TIMESTAMP
         WHERE id_presensi = $2
         RETURNING *
       `;
@@ -855,6 +861,7 @@ exports.getDashboardToday = async (req, res) => {
     const dateObj = new Date(today + 'T00:00:00+07:00');
     const todayName = dayNames[dateObj.getDay()];
 
+    // FIX #4: exclude kalender akademik agar total jadwal di dashboard akurat
     const result = await pool.query(`
       SELECT
         COUNT(j.id_jadwal) FILTER (
@@ -878,6 +885,16 @@ exports.getDashboardToday = async (req, res) => {
         ON p.id_jadwal = j.id_jadwal
         AND p.tanggal = $1
       WHERE j.hari = $2
+        AND j.created_at::date <= $1
+        -- FIX #4: exclude jadwal yang terkena kalender akademik
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
     `, [today, todayName]);
 
     const data = result.rows[0];
