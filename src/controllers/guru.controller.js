@@ -2,6 +2,7 @@ const pool = require('../db');
 const XLSX = require('xlsx');
 const {
   getWIBDate,
+  getWIBTimeString,
 } = require('../utils/timezone');
 
 const guruWithMapelQuery = `
@@ -128,6 +129,9 @@ exports.getGuru = async (req, res) => {
   }
 };
 
+/* =======================
+   CREATE GURU
+======================= */
 exports.createGuru = async (req, res) => {
   try {
     const { nama_guru, nip, mapel } = req.body;
@@ -151,6 +155,9 @@ exports.createGuru = async (req, res) => {
   }
 };
 
+/* =======================
+   GET GURU BY ID
+======================= */
 exports.getGuruById = async (req, res) => {
   try {
     const result = await pool.query(
@@ -165,6 +172,9 @@ exports.getGuruById = async (req, res) => {
   }
 };
 
+/* =======================
+   GET GURU BY MAPEL
+======================= */
 exports.getGuruByMapel = async (req, res) => {
   const id_mapel = parseInt(req.query.id_mapel, 10);
   if (isNaN(id_mapel))
@@ -183,6 +193,9 @@ exports.getGuruByMapel = async (req, res) => {
   }
 };
 
+/* =======================
+   UPDATE GURU
+======================= */
 exports.updateGuru = async (req, res) => {
   const { id } = req.params;
   const { nama_guru, nip, mapel } = req.body;
@@ -199,6 +212,9 @@ exports.updateGuru = async (req, res) => {
   res.json(result.rows[0]);
 };
 
+/* =======================
+   DELETE GURU
+======================= */
 exports.deleteGuru = async (req, res) => {
   try {
     const cekJadwal = await pool.query(
@@ -217,6 +233,9 @@ exports.deleteGuru = async (req, res) => {
   }
 };
 
+/* =======================
+   IMPORT GURU
+======================= */
 exports.importGuru = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'File tidak ditemukan' });
@@ -251,6 +270,9 @@ exports.importGuru = async (req, res) => {
   }
 };
 
+/* =======================
+   STATISTIK GURU
+======================= */
 exports.getStatistikGuru = async (req, res) => {
   try {
     const { id_guru, range } = req.query;
@@ -391,6 +413,14 @@ exports.getPerformaGuru = async (req, res) => {
           WHEN 6 THEN 'Sabtu'
         END
         AND gs::date >= j.created_at::date
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
         ${kelasFilter}
       )
       SELECT
@@ -520,6 +550,14 @@ exports.getUnpresensiStats = async (req, res) => {
           WHEN 6 THEN 'Sabtu'
         END
         AND gs::date >= j.created_at::date
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
         ${kelasFilter}
       )
       SELECT COUNT(*) AS total_belum
@@ -778,6 +816,147 @@ exports.getTopGuruTidakHadir = async (req, res) => {
     });
   } catch (err) {
     console.error('TOP TIDAK HADIR ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   DASHBOARD TODAY (ADMIN)
+======================= */
+exports.getDashboardToday = async (req, res) => {
+  try {
+    const today = getWIBDate();
+    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const todayName = dayNames[new Date(today + 'T00:00:00+07:00').getDay()];
+    const nowTime = getWIBTimeString(); // format HH:MM:SS
+
+    const [kalenderResult, jadwalResult] = await Promise.all([
+
+      // Kalender hari ini
+      pool.query(`
+        SELECT
+          keterangan,
+          TO_CHAR(jam_mulai,  'HH24:MI') AS jam_mulai,
+          TO_CHAR(jam_selesai,'HH24:MI') AS jam_selesai
+        FROM kalender_akademik
+        WHERE $1::date BETWEEN tanggal_mulai AND tanggal_selesai
+        ORDER BY jam_mulai ASC NULLS FIRST
+        LIMIT 1
+      `, [today]),
+
+      // Semua jadwal hari ini + join presensi
+      pool.query(`
+        SELECT
+          j.id_jadwal,
+          TO_CHAR(j.jam_mulai,  'HH24:MI') AS jam_mulai,
+          TO_CHAR(j.jam_selesai,'HH24:MI') AS jam_selesai,
+          j.guru->>'nama_guru'             AS nama_guru,
+          j.guru->'mapel'->>'nama_mapel'   AS nama_mapel,
+          k.name                           AS nama_kelas,
+          p.id_presensi,
+          p.status,
+          p.status_approve,
+          p.memberikan_tugas,
+          TO_CHAR(p.created_at AT TIME ZONE 'Asia/Jakarta', 'HH24:MI') AS jam_presensi
+        FROM jadwal j
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN presensi_guru p
+          ON p.id_jadwal = j.id_jadwal
+          AND p.tanggal = $1
+        WHERE j.hari = $2
+          AND j.created_at::date <= $1
+          AND NOT EXISTS (
+            SELECT 1 FROM kalender_akademik ka
+            WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+              AND (
+                ka.jam_mulai  IS NULL OR ka.jam_selesai IS NULL
+                OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+              )
+          )
+        ORDER BY j.jam_mulai ASC
+      `, [today, todayName])
+
+    ]);
+
+    // Helper: ambil 2 huruf inisial dari nama guru
+    const getInisial = (nama = '') =>
+      nama.split(' ').slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('');
+
+    const rows = jadwalResult.rows;
+
+    let pending = 0;
+    let approved = 0;
+    const hadirList = [];
+    const tidakHadirList = [];
+    const belumPresensiList = [];
+
+    for (const row of rows) {
+      const sudahLewat = nowTime >= row.jam_selesai;
+
+      if (row.status_approve === 'Approved') {
+        approved++;
+        if (row.status === 'Hadir') {
+          hadirList.push({
+            id: row.id_jadwal,
+            inisial: getInisial(row.nama_guru),
+            guru: row.nama_guru,
+            mapel: row.nama_mapel,
+            kelas: row.nama_kelas,
+            jam: row.jam_presensi
+          });
+        } else if (row.status === 'Tidak Hadir') {
+          tidakHadirList.push({
+            id: row.id_jadwal,
+            inisial: getInisial(row.nama_guru),
+            guru: row.nama_guru,
+            mapel: row.nama_mapel,
+            kelas: row.nama_kelas,
+            tugas: row.memberikan_tugas === true
+          });
+        }
+
+      } else if (row.status_approve === 'Pending') {
+        pending++;
+
+      } else {
+        // NULL (belum presensi) atau Rejected — masuk belumList kalau jam sudah lewat
+        if (sudahLewat) {
+          belumPresensiList.push({
+            id: row.id_jadwal,
+            guru: row.nama_guru,
+            mapel: row.nama_mapel,
+            kelas: row.nama_kelas,
+            jam: `${row.jam_mulai}–${row.jam_selesai}`
+          });
+        }
+      }
+    }
+
+    // Format kalender
+    let kalenderHariIni = null;
+    if (kalenderResult.rows.length > 0) {
+      const k = kalenderResult.rows[0];
+      kalenderHariIni = {
+        keterangan: k.keterangan,
+        jam: k.jam_mulai && k.jam_selesai ? `${k.jam_mulai}–${k.jam_selesai}` : null
+      };
+    }
+
+    res.json({
+      kalenderHariIni,
+      summary: {
+        total: rows.length,
+        pending,
+        approved,
+        belum: belumPresensiList.length
+      },
+      hadirList,
+      tidakHadirList,
+      belumPresensiList
+    });
+
+  } catch (err) {
+    console.error('DASHBOARD TODAY ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

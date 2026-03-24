@@ -17,17 +17,20 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/jadwal/today', auth, role.onlyKM, isLibur, controller.getJadwalKelasHariIni);
 
 // Get detail jadwal by ID
-router.get('/jadwal/:id_jadwal', auth, role.onlyKM, controller.getJadwalByIdKM);
+// FIX #2a: tambah isLibur agar halaman create tidak bisa diakses saat libur/rapat
+router.get('/jadwal/:id_jadwal', auth, role.onlyKM, isLibur, controller.getJadwalByIdKM);
 
 // Create presensi oleh KM
-router.post('/presensi', auth, role.onlyKM, upload.single('foto'), controller.createPresensiByKM);
+// FIX #2b: tambah isLibur agar submit tidak bisa saat libur/rapat
+router.post('/presensi', auth, role.onlyKM, isLibur, upload.single('foto'), controller.createPresensiByKM);
 
 // Get presensi by ID untuk KM (dipakai saat resubmit untuk pre-fill data)
 // PENTING: route ini harus SEBELUM /presensi/:id/resubmit agar tidak bentrok
 router.get('/presensi/:id', auth, role.onlyKM, controller.getPresensiByIdKM);
 
 // Resubmit presensi yang ditolak oleh KM
-router.put('/presensi/:id/resubmit', auth, role.onlyKM, upload.single('foto'), controller.resubmitPresensiByKM);
+// FIX #2c: tambah isLibur — resubmit juga tidak boleh dilakukan saat libur/rapat
+router.put('/presensi/:id/resubmit', auth, role.onlyKM, isLibur, upload.single('foto'), controller.resubmitPresensiByKM);
 
 // ============================================
 // ADMIN/PIKET ROUTES (di-mount di /presensi)
