@@ -22,8 +22,6 @@ exports.getJadwalKelasHariIni = async (req, res) => {
 
     const wibInfo = getWIBInfo();
 
-    // FIX #3: tambah filter created_at agar jadwal yang baru dibuat hari ini
-    // tidak langsung muncul — konsisten dengan getRiwayatPresensiKM & getPerformaGuru
     const result = await pool.query(
       `SELECT 
         j.id_jadwal,
@@ -51,7 +49,6 @@ exports.getJadwalKelasHariIni = async (req, res) => {
       WHERE j.id_kelas = $2 
         AND j.hari = $3
         AND j.created_at::date <= $1
-        -- Exclude jadwal yang terkena kalender akademik
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
           WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
@@ -243,7 +240,6 @@ exports.createPresensiByKM = async (req, res) => {
       return res.status(400).json({ message: 'Data tidak lengkap' });
     }
 
-    // FIX #1: validasi id_kelas agar KM tidak bisa presensi jadwal kelas lain
     const jadwalResult = await pool.query(
       `SELECT jam_mulai, jam_selesai FROM jadwal WHERE id_jadwal = $1 AND id_kelas = $2`,
       [id_jadwal, id_kelas_user]
@@ -355,8 +351,75 @@ exports.createPresensi = async (req, res) => {
 ======================= */
 exports.getPresensi = async (req, res) => {
   try {
-    const { tanggal, id_kelas } = req.query;
+    const { tanggal, id_kelas, status, search } = req.query;
 
+    const targetDate = tanggal || getWIBDate();
+    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const dateObj = new Date(targetDate + 'T00:00:00+07:00');
+    const targetDay = dayNames[dateObj.getDay()];
+
+    const params = [targetDate, targetDay];
+    let kelasClause = '';
+    let statusClause = '';
+    let searchClause = '';
+
+    if (id_kelas) {
+      params.push(parseInt(id_kelas));
+      kelasClause = `AND j.id_kelas = $${params.length}`;
+    }
+
+    if (status === 'belum') {
+      statusClause = 'AND p.id_presensi IS NULL';
+    } else if (status === 'Pending') {
+      statusClause = "AND p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'";
+    } else if (status === 'Approved') {
+      statusClause = "AND p.status_approve = 'Approved'";
+    } else if (status === 'Rejected') {
+      statusClause = "AND p.status_approve = 'Rejected'";
+    }
+
+    if (search && search.trim()) {
+      params.push(`%${search.trim()}%`);
+      const idx = params.length;
+      searchClause = `AND (
+        (j.guru->>'nama_guru') ILIKE $${idx}
+        OR (j.guru->'mapel'->>'nama_mapel') ILIKE $${idx}
+      )`;
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        j.id_jadwal, j.hari, j.jam_mulai, j.jam_selesai, j.guru, j.id_kelas,
+        k.name AS kelas_name, k.tingkat,
+        jr.nama_jurusan AS jurusan,
+        p.id_presensi, p.tanggal, p.status, p.foto_bukti,
+        p.memberikan_tugas, p.catatan, p.status_approve, p.alasan_reject,
+        p.diabsen_oleh, p.approved_by, p.created_at, p.updated_at
+      FROM jadwal j
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+      LEFT JOIN presensi_guru p
+        ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
+      WHERE j.hari = $2
+        ${kelasClause}
+        ${statusClause}
+        ${searchClause}
+      ORDER BY k.name ASC, j.jam_mulai ASC
+    `, params);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   GET PRESENSI SUMMARY (count per tab)
+======================= */
+exports.getPresensiSummary = async (req, res) => {
+  try {
+    const { tanggal, id_kelas } = req.query;
     const targetDate = tanggal || getWIBDate();
 
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -365,49 +428,38 @@ exports.getPresensi = async (req, res) => {
 
     const params = [targetDate, targetDay];
     let kelasClause = '';
-
     if (id_kelas) {
       params.push(parseInt(id_kelas));
       kelasClause = `AND j.id_kelas = $${params.length}`;
     }
 
     const result = await pool.query(`
-      SELECT 
-        j.id_jadwal,
-        j.hari,
-        j.jam_mulai,
-        j.jam_selesai,
-        j.guru,
-        j.id_kelas,
-        k.name  AS kelas_name,
-        k.tingkat,
-        jr.nama_jurusan AS jurusan,
-        p.id_presensi,
-        p.tanggal,
-        p.status,
-        p.foto_bukti,
-        p.memberikan_tugas,
-        p.catatan,
-        p.status_approve,
-        p.alasan_reject,
-        p.diabsen_oleh,
-        p.approved_by,
-        p.created_at,
-        p.updated_at
+      SELECT
+        COUNT(*) FILTER (
+          WHERE p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'
+        ) AS pending,
+        COUNT(*) FILTER (WHERE p.status_approve = 'Approved') AS approved,
+        COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS rejected,
+        COUNT(*) FILTER (WHERE p.id_presensi IS NULL)         AS belum,
+        COUNT(*)                                              AS total
       FROM jadwal j
       JOIN kelas k ON k.id = j.id_kelas
-      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       LEFT JOIN presensi_guru p
-        ON p.id_jadwal = j.id_jadwal
-        AND p.tanggal = $1
+        ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
       WHERE j.hari = $2
         ${kelasClause}
-      ORDER BY k.name ASC, j.jam_mulai ASC
     `, params);
 
-    res.json(result.rows);
+    const row = result.rows[0];
+    res.json({
+      pending: parseInt(row.pending),
+      approved: parseInt(row.approved),
+      rejected: parseInt(row.rejected),
+      belum: parseInt(row.belum),
+      total: parseInt(row.total),
+    });
   } catch (err) {
-    console.error(err);
+    console.error('getPresensiSummary ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -726,7 +778,6 @@ exports.getRiwayatPresensiKM = async (req, res) => {
             WHEN 6 THEN 'Sabtu'
           END
           AND gs::date >= j.created_at::date
-          -- Exclude slot yang terkena kalender akademik
           AND NOT EXISTS (
             SELECT 1 FROM kalender_akademik ka
             WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
@@ -740,13 +791,16 @@ exports.getRiwayatPresensiKM = async (req, res) => {
       )
     `;
 
+    // ─── COUNT + SUMMARY (tambah total_tidak_hadir_dengan_tugas) ───
     const countResult = await pool.query(
       `${slotsCTE}
        SELECT
-         COUNT(*)                                          AS total,
-         COUNT(*) FILTER (WHERE p.status = 'Hadir')       AS total_hadir,
-         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
-         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)    AS total_belum
+         COUNT(*)                                                                      AS total,
+         COUNT(*) FILTER (WHERE p.status = 'Hadir')                                   AS total_hadir,
+         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')                             AS total_tidak_hadir,
+         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS total_tidak_hadir_dengan_tugas,
+         COUNT(*) FILTER (WHERE p.status_approve = 'Rejected')                        AS total_ditolak,
+         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)                                AS total_belum
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
@@ -762,6 +816,8 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     const total = parseInt(countResult.rows[0].total, 10);
     const totalHadir = parseInt(countResult.rows[0].total_hadir, 10);
     const totalTidakHadir = parseInt(countResult.rows[0].total_tidak_hadir, 10);
+    const totalTidakHadirDenganTugas = parseInt(countResult.rows[0].total_tidak_hadir_dengan_tugas, 10);
+    const totalDitolak = parseInt(countResult.rows[0].total_ditolak, 10);
     const totalBelum = parseInt(countResult.rows[0].total_belum, 10);
     const totalPages = Math.ceil(total / limit);
 
@@ -839,7 +895,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     res.json({
       message: 'Riwayat presensi berhasil diambil',
       data: formatted,
-      summary: { totalSlot: total, totalHadir, totalTidakHadir, totalBelum },
+      summary: { totalSlot: total, totalHadir, totalTidakHadir, totalTidakHadirDenganTugas, totalDitolak, totalBelum },
       pagination: { page, perPage: limit, totalItems: total, totalPages },
       filters: { status, tanggal }
     });
@@ -861,7 +917,6 @@ exports.getDashboardToday = async (req, res) => {
     const dateObj = new Date(today + 'T00:00:00+07:00');
     const todayName = dayNames[dateObj.getDay()];
 
-    // FIX #4: exclude kalender akademik agar total jadwal di dashboard akurat
     const result = await pool.query(`
       SELECT
         COUNT(j.id_jadwal) FILTER (
@@ -886,7 +941,6 @@ exports.getDashboardToday = async (req, res) => {
         AND p.tanggal = $1
       WHERE j.hari = $2
         AND j.created_at::date <= $1
-        -- FIX #4: exclude jadwal yang terkena kalender akademik
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
           WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai

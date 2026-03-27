@@ -42,6 +42,9 @@ router.post('/', auth, upload.single('foto_bukti'), isLibur, controller.createPr
 // Get all presensi
 router.get('/', auth, role.onlyPiketOrAdmin, controller.getPresensi);
 
+// GET summary count semua tab
+router.get('/summary', auth, role.onlyPiketOrAdmin, controller.getPresensiSummary);
+
 // Get dashboard today
 router.get('/dashboard/today', auth, role.onlyPiketOrAdmin, controller.getDashboardToday);
 
