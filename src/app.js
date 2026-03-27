@@ -19,6 +19,8 @@ app.use('/mapel', require('./routes/mapel.routes'));
 app.use('/jadwal', require('./routes/jadwal.routes'));
 app.use('/presensi', require('./routes/presensi.routes'));
 
+require('./utils/cron');
+
 
 
 

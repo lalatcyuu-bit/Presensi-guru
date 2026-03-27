@@ -8,6 +8,10 @@ exports.createPresensi = async (req, res) => {
   try {
     const { id_jadwal, status, diabsen_oleh, catatan } = req.body;
 
+    if (!id_jadwal || !status || !diabsen_oleh) {
+      return res.status(400).json({ message: 'Data tidak lengkap' });
+    }
+
     if (!req.file) {
       return res.status(400).json({ message: 'Foto wajib diupload' });
     }
@@ -24,7 +28,7 @@ exports.createPresensi = async (req, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('CREATE PRESENSI ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

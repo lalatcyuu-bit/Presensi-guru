@@ -20,6 +20,7 @@
     "googleapis": "^171.2.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
     "pg": "^8.17.2",
     "streamifier": "^0.1.1"
   },

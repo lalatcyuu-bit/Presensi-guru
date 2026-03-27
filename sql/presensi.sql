@@ -13,3 +13,7 @@ CREATE TABLE presensi_guru (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (id_jadwal, tanggal)
 );
+
+// harus di ubah menjadi null
+ALTER TABLE presensi_guru
+ALTER COLUMN foto_bukti DROP NOT NULL;
