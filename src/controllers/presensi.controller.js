@@ -355,7 +355,7 @@ exports.createPresensi = async (req, res) => {
 ======================= */
 exports.getPresensi = async (req, res) => {
   try {
-    const { tanggal, id_kelas, status } = req.query; // tambah status
+    const { tanggal, id_kelas, status, search } = req.query; // ← tambah search
 
     const targetDate = tanggal || getWIBDate();
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -365,13 +365,13 @@ exports.getPresensi = async (req, res) => {
     const params = [targetDate, targetDay];
     let kelasClause = '';
     let statusClause = '';
+    let searchClause = ''; // ← tambah
 
     if (id_kelas) {
       params.push(parseInt(id_kelas));
       kelasClause = `AND j.id_kelas = $${params.length}`;
     }
 
-    // Filter by status tab
     if (status === 'belum') {
       statusClause = 'AND p.id_presensi IS NULL';
     } else if (status === 'Pending') {
@@ -380,6 +380,16 @@ exports.getPresensi = async (req, res) => {
       statusClause = "AND p.status_approve = 'Approved'";
     } else if (status === 'Rejected') {
       statusClause = "AND p.status_approve = 'Rejected'";
+    }
+
+    // ← tambah blok ini
+    if (search && search.trim()) {
+      params.push(`%${search.trim()}%`);
+      const idx = params.length;
+      searchClause = `AND (
+        (j.guru->>'nama_guru') ILIKE $${idx}
+        OR (j.guru->'mapel'->>'nama_mapel') ILIKE $${idx}
+      )`;
     }
 
     const result = await pool.query(`
@@ -398,6 +408,7 @@ exports.getPresensi = async (req, res) => {
       WHERE j.hari = $2
         ${kelasClause}
         ${statusClause}
+        ${searchClause}  -- ← tambah di sini
       ORDER BY k.name ASC, j.jam_mulai ASC
     `, params);
 
