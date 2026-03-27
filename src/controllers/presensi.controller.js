@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { uploadImage, deleteImage, getPublicIdFromUrl } = require('../utils/cloudinary');
+const { emitToRoom } = require('../utils/socket')
 const {
   getWIBDate,
   getWIBTimeString,
@@ -285,10 +286,17 @@ exports.createPresensiByKM = async (req, res) => {
       [id_jadwal, tanggalHariIni, status, fotoLink, diabsen_oleh, memberikanTugasBoolean, keterangan || null, 'Pending']
     );
 
+    emitToRoom('presensi:new', {
+      type: 'NEW_PRESENSI',
+      id_jadwal: result.rows[0].id_jadwal,
+      tanggal: result.rows[0].tanggal,
+      status_approve: 'Pending'
+    })
+
     res.status(201).json({
       message: 'Presensi berhasil disimpan',
       data: result.rows[0]
-    });
+    })
 
   } catch (err) {
     if (err.code === '23505') {
@@ -626,10 +634,17 @@ exports.resubmitPresensiByKM = async (req, res) => {
       [statusBaru, fotoBaru, memberikanTugasBoolean, keterangan || null, userId, idPresensi]
     );
 
+    emitToRoom('presensi:resubmit', {
+      type: 'RESUBMIT_PRESENSI',
+      id_presensi: result.rows[0].id_presensi,
+      id_jadwal: result.rows[0].id_jadwal,
+      status_approve: 'Pending'
+    })
+
     res.json({
       message: 'Presensi berhasil disubmit ulang',
       data: result.rows[0]
-    });
+    })
 
   } catch (err) {
     console.error('❌ ERROR resubmitPresensiByKM:', err);

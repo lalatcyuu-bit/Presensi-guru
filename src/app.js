@@ -1,17 +1,31 @@
 require('dotenv').config();
 const express = require('express');
-const app = express();
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
 
+const app = express();
+const httpServer = createServer(app);
+
+const allowedOrigins = [
+  'https://bv8mb4zp-3000.asse.devtunnels.ms',
+  'http://localhost:3000',
+  'http://localhost:8881',
+  'http://103.10.60.91:8881',
+  'https://bgdr3s45-3000.asse.devtunnels.ms',
+  'http://192.168.100.22:3000'
+]
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
 app.use(cors({
-  origin: [
-    'https://bv8mb4zp-3000.asse.devtunnels.ms',
-    'http://localhost:3000',
-    'http://localhost:8881',
-    'http://103.10.60.91:8881',
-    'https://bgdr3s45-3000.asse.devtunnels.ms',
-    'http://192.168.100.22:3000'
-  ],
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -29,7 +43,10 @@ app.use('/kelas', require('./routes/kelas.routes'));
 app.use('/km', require('./routes/presensi.routes'));
 app.use('/kalender', require('./routes/kalender.routes'));
 
+const { initSocket } = require('./utils/socket')
+initSocket(io)
+
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Server running di http://localhost:${PORT}`);
 });
