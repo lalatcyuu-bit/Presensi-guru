@@ -355,8 +355,65 @@ exports.createPresensi = async (req, res) => {
 ======================= */
 exports.getPresensi = async (req, res) => {
   try {
-    const { tanggal, id_kelas } = req.query;
+    const { tanggal, id_kelas, status } = req.query; // tambah status
 
+    const targetDate = tanggal || getWIBDate();
+    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const dateObj = new Date(targetDate + 'T00:00:00+07:00');
+    const targetDay = dayNames[dateObj.getDay()];
+
+    const params = [targetDate, targetDay];
+    let kelasClause = '';
+    let statusClause = '';
+
+    if (id_kelas) {
+      params.push(parseInt(id_kelas));
+      kelasClause = `AND j.id_kelas = $${params.length}`;
+    }
+
+    // Filter by status tab
+    if (status === 'belum') {
+      statusClause = 'AND p.id_presensi IS NULL';
+    } else if (status === 'Pending') {
+      statusClause = "AND p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'";
+    } else if (status === 'Approved') {
+      statusClause = "AND p.status_approve = 'Approved'";
+    } else if (status === 'Rejected') {
+      statusClause = "AND p.status_approve = 'Rejected'";
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        j.id_jadwal, j.hari, j.jam_mulai, j.jam_selesai, j.guru, j.id_kelas,
+        k.name AS kelas_name, k.tingkat,
+        jr.nama_jurusan AS jurusan,
+        p.id_presensi, p.tanggal, p.status, p.foto_bukti,
+        p.memberikan_tugas, p.catatan, p.status_approve, p.alasan_reject,
+        p.diabsen_oleh, p.approved_by, p.created_at, p.updated_at
+      FROM jadwal j
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+      LEFT JOIN presensi_guru p
+        ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
+      WHERE j.hari = $2
+        ${kelasClause}
+        ${statusClause}
+      ORDER BY k.name ASC, j.jam_mulai ASC
+    `, params);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   GET PRESENSI SUMMARY (count per tab)
+======================= */
+exports.getPresensiSummary = async (req, res) => {
+  try {
+    const { tanggal, id_kelas } = req.query;
     const targetDate = tanggal || getWIBDate();
 
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -365,49 +422,38 @@ exports.getPresensi = async (req, res) => {
 
     const params = [targetDate, targetDay];
     let kelasClause = '';
-
     if (id_kelas) {
       params.push(parseInt(id_kelas));
       kelasClause = `AND j.id_kelas = $${params.length}`;
     }
 
     const result = await pool.query(`
-      SELECT 
-        j.id_jadwal,
-        j.hari,
-        j.jam_mulai,
-        j.jam_selesai,
-        j.guru,
-        j.id_kelas,
-        k.name  AS kelas_name,
-        k.tingkat,
-        jr.nama_jurusan AS jurusan,
-        p.id_presensi,
-        p.tanggal,
-        p.status,
-        p.foto_bukti,
-        p.memberikan_tugas,
-        p.catatan,
-        p.status_approve,
-        p.alasan_reject,
-        p.diabsen_oleh,
-        p.approved_by,
-        p.created_at,
-        p.updated_at
+      SELECT
+        COUNT(*) FILTER (
+          WHERE p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'
+        ) AS pending,
+        COUNT(*) FILTER (WHERE p.status_approve = 'Approved') AS approved,
+        COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS rejected,
+        COUNT(*) FILTER (WHERE p.id_presensi IS NULL)         AS belum,
+        COUNT(*)                                              AS total
       FROM jadwal j
       JOIN kelas k ON k.id = j.id_kelas
-      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       LEFT JOIN presensi_guru p
-        ON p.id_jadwal = j.id_jadwal
-        AND p.tanggal = $1
+        ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
       WHERE j.hari = $2
         ${kelasClause}
-      ORDER BY k.name ASC, j.jam_mulai ASC
     `, params);
 
-    res.json(result.rows);
+    const row = result.rows[0];
+    res.json({
+      pending: parseInt(row.pending),
+      approved: parseInt(row.approved),
+      rejected: parseInt(row.rejected),
+      belum: parseInt(row.belum),
+      total: parseInt(row.total),
+    });
   } catch (err) {
-    console.error(err);
+    console.error('getPresensiSummary ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
