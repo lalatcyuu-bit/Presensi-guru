@@ -401,6 +401,15 @@ exports.getPresensi = async (req, res) => {
       LEFT JOIN presensi_guru p
         ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
       WHERE j.hari = $2
+        AND j.created_at::date <= $1
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
         ${kelasClause}
         ${statusClause}
         ${searchClause}
@@ -447,6 +456,15 @@ exports.getPresensiSummary = async (req, res) => {
       LEFT JOIN presensi_guru p
         ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
       WHERE j.hari = $2
+        AND j.created_at::date <= $1
+        AND NOT EXISTS (
+          SELECT 1 FROM kalender_akademik ka
+          WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND (
+              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+            )
+        )
         ${kelasClause}
     `, params);
 
