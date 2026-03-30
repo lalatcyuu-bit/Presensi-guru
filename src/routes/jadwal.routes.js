@@ -13,4 +13,5 @@ router.post("/import", upload.single("file"), jadwalController.importJadwal);
 router.get('/:id', auth, role.onlyAdmin, jadwalController.getJadwalById);
 router.put('/:id', auth, role.onlyAdmin, jadwalController.updateJadwal);
 router.delete('/:id', auth, role.onlyAdmin, jadwalController.deleteJadwal);
+
 module.exports = router;

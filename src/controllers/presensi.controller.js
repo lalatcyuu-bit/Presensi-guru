@@ -339,6 +339,10 @@ exports.createPresensi = async (req, res) => {
       return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
     }
 
+    if (!id_jadwal || !status || !diabsen_oleh) {
+      return res.status(400).json({ message: 'Data tidak lengkap' });
+    }
+
     if (!req.file) {
       return res.status(400).json({ message: 'Foto wajib diupload' });
     }

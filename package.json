@@ -23,7 +23,10 @@
     "jsonwebtoken": "^9.0.3",
     "moment-timezone": "^0.6.0",
     "multer": "^2.0.2",
+<<<<<<< HEAD
     "multer-storage-cloudinary": "^4.0.0",
+=======
+>>>>>>> 690436e758120e19bf8616b394bd3d6d1f09093e
     "node-cron": "^4.2.1",
     "pg": "^8.17.2",
     "streamifier": "^0.1.1",

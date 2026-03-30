@@ -23,8 +23,16 @@ app.use('/guru', require('./routes/guru.routes'));
 app.use('/mapel', require('./routes/mapel.routes'));
 app.use('/jadwal', require('./routes/jadwal.routes'));
 app.use('/presensi', require('./routes/presensi.routes'));
+<<<<<<< HEAD
 app.use('/kelas', require('./routes/kelas.routes'));
 app.use('/kalender', require('./routes/kalender.routes'));
+=======
+
+require('./utils/cron');
+
+
+
+>>>>>>> 690436e758120e19bf8616b394bd3d6d1f09093e
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
