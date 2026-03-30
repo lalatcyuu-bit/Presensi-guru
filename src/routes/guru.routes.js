@@ -9,7 +9,6 @@ const guruController = require('../controllers/guru.controller');
 router.post('/', auth, role.onlyAdmin, guruController.createGuru);
 router.get('/', auth, role.onlyAdmin, guruController.getGuru);
 router.get('/search', auth, role.onlyAdmin, guruController.getGuruByMapel);
-<<<<<<< HEAD
 router.post('/import', upload.single('file'), guruController.importGuru);
 router.get('/statistik', auth, role.onlyAdmin, guruController.getStatistikGuru);
 router.get('/bar', auth, role.onlyAdmin, guruController.getBarHadirVsTidak);
@@ -18,9 +17,6 @@ router.get('/tren', auth, role.onlyAdmin, guruController.getTrenKehadiranKeselur
 router.get('/top-hadir', auth, role.onlyAdmin, guruController.getTopGuruHadir);        // NEW
 router.get('/top-tidak-hadir', auth, role.onlyAdmin, guruController.getTopGuruTidakHadir);
 router.get('/:id', auth, role.onlyAdmin, guruController.getGuruById);
-=======
-router.get('/:id', guruController.getGuruById);
->>>>>>> 690436e758120e19bf8616b394bd3d6d1f09093e
 router.put('/:id', auth, role.onlyAdmin, guruController.updateGuru);
 router.delete('/:id', auth, role.onlyAdmin, guruController.deleteGuru);
 
