@@ -1,5 +1,6 @@
 const pool = require('../db');
 const bcrypt = require('bcrypt');
+const XLSX = require('xlsx');
 // const {
 //   uploadImage,
 //   getPublicIdFromUrl,
@@ -259,6 +260,124 @@ exports.deleteUser = async (req, res) => {
     res.json({ message: 'User berhasil dihapus' });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.importUser = async (req, res) => {
+  try {
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'File wajib diupload' });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(sheet);
+
+    if (!data.length) {
+      return res.status(400).json({ message: 'File kosong' });
+    }
+
+    const inserted = [];
+    const skipped = [];
+
+    for (const row of data) {
+
+      const name = row.name?.trim();
+      const username = row.username?.trim();
+      const password = row.password?.trim();
+      const role = row.role?.toLowerCase();
+      const kelasName = row.kelas?.trim();
+
+      if (!name || !username || !password || !role) {
+        skipped.push({ row, reason: 'Data tidak lengkap' });
+        continue;
+      }
+
+      // ======================
+      // MAP ROLE
+      // ======================
+      let id_role = null;
+
+      if (role === 'admin') id_role = 1;
+      else if (role === 'km') id_role = 2;
+      else if (role === 'piket') id_role = 3;
+      else {
+        skipped.push({ row, reason: 'Role tidak valid' });
+        continue;
+      }
+
+      // ======================
+      // VALIDASI KM
+      // ======================
+      let id_kelas = null;
+
+      if (id_role === 2) {
+        if (!kelasName) {
+          skipped.push({ row, reason: 'KM wajib punya kelas' });
+          continue;
+        }
+
+        const kelas = await pool.query(
+          `SELECT id FROM kelas WHERE LOWER(name) = LOWER($1)`,
+          [kelasName]
+        );
+
+        if (!kelas.rowCount) {
+          skipped.push({ row, reason: 'Kelas tidak ditemukan' });
+          continue;
+        }
+
+        id_kelas = kelas.rows[0].id;
+
+      } else {
+        if (kelasName) {
+          skipped.push({ row, reason: 'Role ini tidak boleh punya kelas' });
+          continue;
+        }
+      }
+
+      // ======================
+      // CEK USERNAME
+      // ======================
+      const cek = await pool.query(
+        `SELECT id FROM users WHERE username = $1`,
+        [username]
+      );
+
+      if (cek.rowCount > 0) {
+        skipped.push({ row, reason: 'Username sudah dipakai' });
+        continue;
+      }
+
+      // ======================
+      // HASH PASSWORD
+      // ======================
+      const hashed = await bcrypt.hash(password, 10);
+
+      const result = await pool.query(
+        `INSERT INTO users 
+         (name, username, password, id_role, id_kelas, is_profile_complete)
+         VALUES ($1, $2, $3, $4, $5, false)
+         RETURNING id, name, username`,
+        [name, username, hashed, id_role, id_kelas]
+      );
+
+      inserted.push(result.rows[0]);
+    }
+
+    res.json({
+      message: 'Import user selesai',
+      total: data.length,
+      berhasil: inserted.length,
+      gagal: skipped.length,
+      inserted,
+      skipped
+    });
+
+  } catch (err) {
+    console.error('IMPORT USER ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

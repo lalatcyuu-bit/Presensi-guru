@@ -247,3 +247,87 @@ exports.deleteMapel = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+const XLSX = require('xlsx');
+
+/* =======================
+   IMPORT MAPEL
+======================= */
+exports.importMapel = async (req, res) => {
+  try {
+
+    if (!req.file) {
+      return res.status(400).json({
+        message: 'File wajib diupload'
+      });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(sheet);
+
+    if (!data.length) {
+      return res.status(400).json({
+        message: 'File kosong'
+      });
+    }
+
+    const inserted = [];
+    const skipped = [];
+
+    for (const row of data) {
+
+      const nama_mapel = row.nama_mapel?.trim();
+      const kode_mapel = row.kode_mapel?.trim();
+      let status = row.status?.toLowerCase();
+
+      if (!nama_mapel || !kode_mapel) {
+        skipped.push({ row, reason: 'Data tidak lengkap' });
+        continue;
+      }
+
+      // normalize status
+      if (status === 'aktif') {
+        status = true;
+      } else if (status === 'nonaktif') {
+        status = false;
+      } else {
+        status = true; // default
+      }
+
+      // cek duplicate kode_mapel
+      const cek = await pool.query(
+        `SELECT id_mapel FROM mapel WHERE kode_mapel = $1`,
+        [kode_mapel.toUpperCase()]
+      );
+
+      if (cek.rowCount > 0) {
+        skipped.push({ row, reason: 'Kode mapel sudah ada' });
+        continue;
+      }
+
+      // insert
+      const result = await pool.query(
+        `INSERT INTO mapel (nama_mapel, kode_mapel, status)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [nama_mapel, kode_mapel.toUpperCase(), status]
+      );
+
+      inserted.push(result.rows[0]);
+    }
+
+    res.json({
+      message: 'Import mapel selesai',
+      total: data.length,
+      berhasil: inserted.length,
+      gagal: skipped.length,
+      inserted,
+      skipped
+    });
+
+  } catch (err) {
+    console.error('IMPORT MAPEL ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
