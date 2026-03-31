@@ -1,4 +1,5 @@
 const pool = require('../db');
+const XLSX = require('xlsx');
 
 /* =======================
    CREATE KELAS
@@ -290,6 +291,96 @@ exports.getJurusan = async (req, res) => {
         res.json({ data: result.rows });
     } catch (err) {
         console.error('GET JURUSAN ERROR:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+/* =======================
+   IMPORT KELAS EXCEL
+======================= */
+exports.importKelas = async (req, res) => {
+    try {
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'File wajib diupload' });
+        }
+
+        const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        if (!data.length) {
+            return res.status(400).json({ message: 'File kosong' });
+        }
+
+        const validTingkat = ['X', 'XI', 'XII'];
+
+        const inserted = [];
+        const skipped = [];
+
+        for (const row of data) {
+
+            const name = row.name?.trim();
+            const tingkat = row.tingkat?.trim();
+            const jurusanCode = row.jurusan?.trim();
+
+            // VALIDASI
+            if (!name || !tingkat || !jurusanCode) {
+                skipped.push({ row, reason: 'Data tidak lengkap' });
+                continue;
+            }
+
+            if (!validTingkat.includes(tingkat)) {
+                skipped.push({ row, reason: 'Tingkat tidak valid' });
+                continue;
+            }
+
+            // CARI JURUSAN BY KODE
+            const jurusanResult = await pool.query(
+                `SELECT id FROM jurusan WHERE LOWER(kode_jurusan) = LOWER($1)`,
+                [jurusanCode]
+            );
+
+            if (!jurusanResult.rowCount) {
+                skipped.push({ row, reason: 'Jurusan tidak ditemukan' });
+                continue;
+            }
+
+            const id_jurusan = jurusanResult.rows[0].id;
+
+            // CEK DUPLIKAT
+            const cek = await pool.query(
+                `SELECT id FROM kelas WHERE LOWER(name) = LOWER($1)`,
+                [name]
+            );
+
+            if (cek.rowCount > 0) {
+                skipped.push({ row, reason: 'Kelas sudah ada' });
+                continue;
+            }
+
+            // INSERT
+            const result = await pool.query(
+                `INSERT INTO kelas (name, tingkat, id_jurusan)
+                 VALUES ($1, $2, $3)
+                 RETURNING *`,
+                [name, tingkat, id_jurusan]
+            );
+
+            inserted.push(result.rows[0]);
+        }
+
+        res.json({
+            message: 'Import selesai',
+            total: data.length,
+            berhasil: inserted.length,
+            gagal: skipped.length,
+            inserted,
+            skipped
+        });
+
+    } catch (err) {
+        console.error('IMPORT KELAS ERROR:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
