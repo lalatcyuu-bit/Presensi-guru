@@ -20,6 +20,7 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "googleapis": "^171.2.0",
+    "ics": "^3.11.0",
     "jsonwebtoken": "^9.0.3",
     "moment-timezone": "^0.6.0",
     "multer": "^2.0.2",
