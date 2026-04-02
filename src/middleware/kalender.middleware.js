@@ -36,8 +36,32 @@ module.exports = async function isLibur(req, res, next) {
 
       // Tidak ada jam = seharian tidak ada KBM
       if (!jamMulai || !jamSelesai) {
+        // [CHANGED] pesan berbeda per tipe
+        let message;
+        if (row.tipe === 'ujian') {
+          message = `Sedang ujian hari ini`;
+        } else if (row.tipe === 'libur') {
+          message = `Hari ini tidak ada KBM`;
+        } else {
+          message = `Presensi tidak tersedia saat ini`;
+        }
+
         return res.status(400).json({
-          message: `Hari ini tidak ada KBM${row.keterangan ? ` (${row.keterangan})` : ''}`
+          message: `${message}${row.keterangan ? ` (${row.keterangan})` : ''}`
+        });
+      }
+
+      // Bagian range jam — juga bedakan tipe [CHANGED]
+      if (jamSekarang >= jamMulai && jamSekarang <= jamSelesai) {
+        let message;
+        if (row.tipe === 'ujian') {
+          message = `Sedang ujian saat ini`;
+        } else {
+          message = `Presensi tidak tersedia saat ini`;
+        }
+
+        return res.status(400).json({
+          message: `${message}${row.keterangan ? ` (${row.keterangan})` : ''}`
         });
       }
 
