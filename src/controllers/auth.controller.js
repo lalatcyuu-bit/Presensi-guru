@@ -2,6 +2,8 @@ const pool = require('../db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
+const failedAttempts = new Map();
+
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -14,23 +16,24 @@ exports.login = async (req, res) => {
       [username]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(401).json({ message: 'Username atau password salah' });
-    }
-
     const user = result.rows[0];
+    const isMatch = user ? await bcrypt.compare(password, user.password) : false;
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Username atau password salah' });
+    if (!user || !isMatch) {
+      const count = (failedAttempts.get(username) || 0) + 1;
+      failedAttempts.set(username, count);
+
+      const message = count >= 3
+        ? 'Username atau password salah. Silakan hubungi admin jika lupa username atau password.'
+        : 'Username atau password salah';
+
+      return res.status(401).json({ message });
     }
+
+    failedAttempts.delete(username);
 
     const token = jwt.sign(
-      {
-        id: user.id,
-        role: user.role,
-        id_kelas: user.id_kelas,
-      },
+      { id: user.id, role: user.role, id_kelas: user.id_kelas },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
