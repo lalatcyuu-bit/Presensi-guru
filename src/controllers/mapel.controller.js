@@ -49,7 +49,7 @@ exports.createMapel = async (req, res) => {
 exports.getMapel = async (req, res) => {
   try {
     const search = req.query.search || null;
-    const status = req.query.status || null;  // 'aktif' | 'nonaktif'
+    const status = req.query.status || null;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
     const offset = (page - 1) * limit;
@@ -57,52 +57,65 @@ exports.getMapel = async (req, res) => {
     const params = [];
     const where = [];
 
-    // Filter search
     if (search) {
       params.push(`%${search}%`);
-      where.push(`(nama_mapel ILIKE $${params.length} OR kode_mapel ILIKE $${params.length})`);
+      where.push(`(m.nama_mapel ILIKE $${params.length} OR m.kode_mapel ILIKE $${params.length})`);
     }
 
-    // Filter status
     if (status === 'aktif') {
-      where.push(`status = true`);
+      where.push(`m.status = true`);
     } else if (status === 'nonaktif') {
-      where.push(`status = false`);
+      where.push(`m.status = false`);
     }
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
-    // Ambil semua tanpa pagination (untuk keperluan dropdown, dll)
+    // Subquery guru — dipakai ulang di kedua branch
+    const guruSubquery = `
+      COALESCE(
+        (
+          SELECT json_agg(
+            json_build_object('id_guru', g.id_guru, 'nama_guru', g.nama_guru)
+            ORDER BY g.nama_guru ASC
+          )
+          FROM guru g
+          WHERE g.mapel @> to_jsonb(ARRAY[m.id_mapel]::int[])
+        ),
+        '[]'
+      ) AS guru_list
+    `;
+
+    // ── All (tanpa pagination, untuk dropdown dll) ──
     if (req.query.all === 'true') {
       const result = await pool.query(
-        `SELECT id_mapel, nama_mapel, kode_mapel, status
-         FROM mapel
+        `SELECT m.id_mapel, m.nama_mapel, m.kode_mapel, m.status, ${guruSubquery}
+         FROM mapel m
          ${whereClause}
-         ORDER BY nama_mapel ASC`,
+         ORDER BY m.nama_mapel ASC`,
         params
       );
       return res.json({ data: result.rows });
     }
 
-    // Hitung total untuk pagination
+    // ── Hitung total untuk pagination ──
     const countResult = await pool.query(
-      `SELECT COUNT(*) AS total FROM mapel ${whereClause}`,
+      `SELECT COUNT(*) AS total FROM mapel m ${whereClause}`,
       params
     );
     const total = parseInt(countResult.rows[0].total, 10);
     const totalPages = Math.ceil(total / limit);
 
-    // Ambil data dengan pagination
+    // ── Ambil data dengan pagination ──
     params.push(limit);
     const limitIndex = params.length;
     params.push(offset);
     const offsetIndex = params.length;
 
     const result = await pool.query(
-      `SELECT id_mapel, nama_mapel, kode_mapel, status
-       FROM mapel
+      `SELECT m.id_mapel, m.nama_mapel, m.kode_mapel, m.status, ${guruSubquery}
+       FROM mapel m
        ${whereClause}
-       ORDER BY id_mapel DESC
+       ORDER BY m.id_mapel DESC
        LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
       params
     );
