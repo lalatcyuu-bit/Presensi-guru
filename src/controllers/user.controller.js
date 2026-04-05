@@ -158,9 +158,12 @@ exports.getUsers = async (req, res) => {
 ======================= */
 exports.getUserById = async (req, res) => {
   const result = await pool.query(
-    `SELECT id, name, username, id_role, id_kelas
-     FROM users
-     WHERE id = $1`,
+    `SELECT u.id, u.name, u.username, u.id_role, u.id_kelas,
+            k.name AS nama_kelas, j.nama_jurusan
+     FROM users u
+     LEFT JOIN kelas k ON k.id = u.id_kelas
+     LEFT JOIN jurusan j ON j.id = k.id_jurusan
+     WHERE u.id = $1`,
     [req.params.id]
   );
 
@@ -168,7 +171,13 @@ exports.getUserById = async (req, res) => {
     return res.status(404).json({ message: 'User tidak ditemukan' });
   }
 
-  res.json(result.rows[0]);
+  const row = result.rows[0];
+  res.json({
+    ...row,
+    nama_kelas: row.nama_kelas && row.nama_jurusan
+      ? `${row.nama_kelas} - ${row.nama_jurusan}`
+      : null
+  });
 };
 
 // exports.getUserProfile = async (req, res) => { ... };
