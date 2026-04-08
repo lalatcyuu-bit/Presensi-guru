@@ -982,3 +982,122 @@ exports.getDashboardToday = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+exports.bulkApprovePresensi = async (req, res) => {
+  try {
+
+    const { ids, status, alasan } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: 'ID presensi wajib diisi' });
+    }
+
+    // =========================
+    // CEK FITUR AKTIF
+    // =========================
+    const enabled = await isBulkEnabled();
+
+    if (!enabled) {
+      return res.status(403).json({
+        message: 'Fitur bulk approval sedang dinonaktifkan oleh admin'
+      });
+    }
+
+    let query;
+    let params;
+
+    // =========================
+    // REJECT
+    // =========================
+    if (status === 'Rejected') {
+
+      query = `
+        UPDATE presensi_guru
+        SET
+          status_approve = 'Rejected',
+          alasan_reject = $1,
+          rejected_at = NOW(),
+          approved_by = $2,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id_presensi = ANY($3::int[])
+        RETURNING *
+      `;
+
+      params = [
+        alasan || null,
+        req.user.id,
+        ids
+      ];
+
+    }
+
+    // =========================
+    // APPROVE
+    // =========================
+    else {
+
+      query = `
+        UPDATE presensi_guru
+        SET
+          status_approve = 'Approved',
+          alasan_reject = NULL,
+          approved_by = $1,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id_presensi = ANY($2::int[])
+        RETURNING *
+      `;
+
+      params = [
+        req.user.id,
+        ids
+      ];
+    }
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      message: `Bulk ${status} berhasil`,
+      total: result.rowCount,
+      data: result.rows
+    });
+
+  } catch (err) {
+    console.error('BULK APPROVE ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =========================
+   OPEN PRESENSI (ADMIN)
+========================= */
+exports.openPresensi = async (req, res) => {
+  try {
+    const { id_presensi } = req.body;
+
+    if (!id_presensi) {
+      return res.status(400).json({ message: 'ID presensi wajib diisi' });
+    }
+
+    const result = await pool.query(
+      `UPDATE presensi_guru
+       SET is_opened_by_admin = true,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id_presensi = $1
+       RETURNING *`,
+      [id_presensi]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Data tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Presensi berhasil dibuka',
+      data: result.rows[0]
+    });
+
+  } catch (err) {
+    console.error('OPEN ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};

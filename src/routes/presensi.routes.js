@@ -45,6 +45,12 @@ router.get('/dashboard/today', auth, role.onlyPiketOrAdmin, controller.getDashbo
 // Get riwayat presensi untuk KM
 router.get('/riwayat', auth, role.onlyKM, controller.getRiwayatPresensiKM);
 
+// Bulk approve/reject presensi
+router.put('/bulk-approve', auth, role.onlyPiketOrAdmin, controller.bulkApprovePresensi);
+
+// Open presensi (Admin)
+router.put('/open', auth, role.onlyPiketOrAdmin, controller.openPresensi);
+
 // Get presensi by ID
 router.get('/:id', auth, role.onlyPiketOrAdmin, controller.getPresensiById);
 

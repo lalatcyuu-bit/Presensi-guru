@@ -82,3 +82,6 @@ CREATE TRIGGER trg_update_presensi_timestamp
 -- VERIFY
 -- SELECT 'Tabel presensi_guru berhasil dibuat' AS status;
 -- SELECT 'CATATAN: Tabel ini kosong, akan diisi oleh KM saat runtime' AS info;
+
+ALTER TABLE presensi_guru
+ADD COLUMN is_opened_by_admin BOOLEAN DEFAULT false;
