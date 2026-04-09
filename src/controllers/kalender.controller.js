@@ -8,16 +8,21 @@ CREATE KALENDER
 */
 exports.createKalender = async (req, res) => {
   try {
-    const { tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai, tipe, keterangan } = req.body;
-
-    if (!tanggal_mulai || !tanggal_selesai) {
-      return res.status(400).json({ message: 'tanggal_mulai dan tanggal_selesai wajib diisi' });
-    }
+    const {
+      tanggal_mulai,
+      tanggal_selesai,
+      jam_mulai,
+      jam_selesai,
+      tipe,
+      keterangan,
+      target_type,
+      target_value
+    } = req.body;
 
     const result = await pool.query(
       `INSERT INTO kalender_akademik
-      (tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai, tipe, keterangan)
-      VALUES ($1,$2,$3,$4,$5,$6)
+      (tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai, tipe, keterangan, target_type, target_value)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
       RETURNING *`,
       [
         tanggal_mulai,
@@ -25,14 +30,13 @@ exports.createKalender = async (req, res) => {
         jam_mulai || null,
         jam_selesai || null,
         tipe || 'libur',
-        keterangan || null
+        keterangan || null,
+        target_type || 'global',
+        target_value || null
       ]
     );
 
-    res.status(201).json({
-      message: 'Kalender berhasil dibuat',
-      data: result.rows[0]
-    });
+    res.json(result.rows[0]);
 
   } catch (err) {
     console.error(err);
@@ -153,34 +157,66 @@ exports.checkLiburHariIni = async (req, res) => {
   try {
 
     const today = new Date();
-    const day = today.getDay(); // 0 Minggu, 6 Sabtu
+    const day = today.getDay();
 
+    const { id_kelas, tingkat, jurusan } = req.user;
+
+    // ======================
+    // WEEKEND
+    // ======================
     if (day === 0 || day === 6) {
       return res.json({
         libur: true,
-        tipe: 'weekend',
-        keterangan: 'Sabtu/Minggu'
+        tipe: 'weekend'
       });
     }
 
-    const result = await pool.query(
-      `
+    // ======================
+    // AMBIL DATA LIBUR
+    // ======================
+    const result = await pool.query(`
       SELECT *
       FROM kalender_akademik
       WHERE CURRENT_DATE BETWEEN tanggal_mulai AND tanggal_selesai
-      `
-    );
+    `);
 
-    if (result.rows.length > 0) {
-      return res.json({
-        libur: true,
-        tipe: 'kalender',
-        data: result.rows
-      });
+    let isLibur = false;
+    let matched = [];
+
+    for (const item of result.rows) {
+
+      const { target_type, target_value } = item;
+
+      if (target_type === 'global') {
+        isLibur = true;
+        matched.push(item);
+      }
+
+      else if (target_type === 'tingkat') {
+        if (target_value?.includes(String(tingkat))) {
+          isLibur = true;
+          matched.push(item);
+        }
+      }
+
+      else if (target_type === 'jurusan') {
+        if (target_value?.includes(jurusan)) {
+          isLibur = true;
+          matched.push(item);
+        }
+      }
+
+      else if (target_type === 'kelas') {
+        if (target_value?.includes(id_kelas)) {
+          isLibur = true;
+          matched.push(item);
+        }
+      }
     }
 
-    res.json({
-      libur: false
+    return res.json({
+      libur: isLibur,
+      data: matched
     });
 
   } catch (err) {
