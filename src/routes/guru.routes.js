@@ -11,6 +11,7 @@ router.post('/', auth, role.onlyAdmin, guruController.createGuru);
 router.get('/', auth, role.onlyAdmin, guruController.getGuru);
 router.get('/search', auth, role.onlyAdmin, guruController.getGuruByMapel);
 router.post('/import', upload.single('file'), guruController.importGuru);
+
 router.get('/statistik', auth, role.onlyPiketOrAdminOrKs, guruController.getStatistikGuru);
 router.get('/bar', auth, role.onlyPiketOrAdminOrKs, guruController.getBarHadirVsTidak);
 router.get('/line', auth, role.onlyPiketOrAdminOrKs, guruController.getLineHadirPerGuru);
@@ -20,7 +21,12 @@ router.get('/top-tidak-hadir', auth, role.onlyPiketOrAdminOrKs, guruController.g
 router.get('/unpresensi-stats', auth, role.onlyPiketOrAdminOrKs, guruController.getUnpresensiStats);
 router.get('/summary-stats', auth, role.onlyPiketOrAdminOrKs, guruController.getSummaryStats);
 router.get('/performa-guru', auth, role.onlyPiketOrAdminOrKs, guruController.getPerformaGuru);
-router.get('/dashboard-today', auth, role.onlyPiketOrAdminOrKs, guruController.getDashboardToday); // NEW
+router.get('/dashboard-today', auth, role.onlyPiketOrAdminOrKs, guruController.getDashboardToday);
+
+// ── Preview PDF: 1 endpoint, return semua data sekaligus ──────────────
+router.get('/preview-data', auth, role.onlyPiketOrAdminOrKs, guruController.getPreviewData);
+router.get('/generate-pdf', auth, role.onlyPiketOrAdminOrKs, guruController.generatePdf);
+
 router.get('/:id', auth, role.onlyAdmin, guruController.getGuruById);
 router.put('/:id', auth, role.onlyAdmin, guruController.updateGuru);
 router.delete('/:id', auth, role.onlyAdmin, guruController.deleteGuru);
