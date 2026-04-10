@@ -10,13 +10,50 @@ const {
 } = require('../utils/timezone');
 
 /* =======================
+   HELPER: Kalender filter SQL yang aware targeting
+   Pakai untuk NOT EXISTS di semua query
+   
+   @param dateExpr   - SQL expression untuk tanggal slot (misal: '$1::date' atau 'gs::date')
+   @param idKelas    - nilai id_kelas user (number | null)
+   @param tingkat    - nilai tingkat user (string | null)
+   @param jurusan    - nilai jurusan user (string | null)
+   @param jamMulaiCol - nama kolom jam_mulai jadwal (misal: 'j.jam_mulai')
+   @param jamSelesaiCol - nama kolom jam_selesai jadwal
+   
+   Returns SQL string untuk NOT EXISTS clause
+======================= */
+function kalenderBlockSQL(dateExpr, { idKelas, tingkat, jurusan }, jamMulaiCol = 'j.jam_mulai', jamSelesaiCol = 'j.jam_selesai') {
+  const parts = [`ka.target_type = 'global'`];
+
+  if (tingkat !== undefined && tingkat !== null) {
+    parts.push(`(ka.target_type = 'tingkat' AND ka.target_value @> to_jsonb(ARRAY[${"'" + String(tingkat) + "'"}]::text[]))`);
+  }
+  if (jurusan !== undefined && jurusan !== null) {
+    parts.push(`(ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY[${"'" + jurusan + "'"}]::text[]))`);
+  }
+  if (idKelas !== undefined && idKelas !== null) {
+    parts.push(`(ka.target_type = 'kelas' AND ka.target_value @> to_jsonb(ARRAY[${parseInt(idKelas)}]::int[]))`);
+  }
+
+  return `NOT EXISTS (
+    SELECT 1 FROM kalender_akademik ka
+    WHERE ${dateExpr}::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+      AND (${parts.join(' OR ')})
+      AND (
+        ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+        OR (${jamMulaiCol} < ka.jam_selesai AND ${jamSelesaiCol} > ka.jam_mulai)
+      )
+  )`;
+}
+
+/* =======================
    HELPER: CEK BULK APPROVAL ENABLED
 ======================= */
 async function isBulkEnabled() {
   const result = await pool.query(
     `SELECT value FROM app_config WHERE key = 'bulk_approval_enabled'`
   );
-  if (!result.rowCount) return true; // default enabled kalau row tidak ada
+  if (!result.rowCount) return true;
   return result.rows[0].value === true;
 }
 
@@ -25,13 +62,15 @@ async function isBulkEnabled() {
 ======================= */
 exports.getJadwalKelasHariIni = async (req, res) => {
   try {
-    const { id_kelas } = req.user;
+    const { id_kelas, tingkat, jurusan } = req.user;
 
     if (!id_kelas) {
       return res.status(400).json({ message: 'User tidak memiliki kelas' });
     }
 
     const wibInfo = getWIBInfo();
+
+    const kalenderBlock = kalenderBlockSQL('$1', { idKelas: id_kelas, tingkat, jurusan });
 
     const result = await pool.query(
       `SELECT 
@@ -60,14 +99,7 @@ exports.getJadwalKelasHariIni = async (req, res) => {
       WHERE j.id_kelas = $2 
         AND j.hari = $3
         AND j.created_at::date <= $1
-        AND NOT EXISTS (
-          SELECT 1 FROM kalender_akademik ka
-          WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-            AND (
-              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-            )
-        )
+        AND ${kalenderBlock}
       ORDER BY j.jam_mulai ASC`,
       [wibInfo.date, id_kelas, wibInfo.day]
     );
@@ -75,7 +107,6 @@ exports.getJadwalKelasHariIni = async (req, res) => {
     const formattedData = result.rows.map(row => {
       const jamMulai = row.jam_mulai.substring(0, 5);
       const jamSelesai = row.jam_selesai.substring(0, 5);
-
       const guruData = row.guru || {};
       const namaGuru = guruData.nama_guru || 'N/A';
       const namaMapel = guruData.mapel?.nama_mapel || 'N/A';
@@ -167,20 +198,18 @@ exports.getJadwalByIdKM = async (req, res) => {
     const row = result.rows[0];
     const jamMulai = row.jam_mulai.substring(0, 5);
     const jamSelesai = row.jam_selesai.substring(0, 5);
-
     const guruData = row.guru || {};
     const namaGuru = guruData.nama_guru || 'N/A';
     const namaMapel = guruData.mapel?.nama_mapel || 'N/A';
-
     const currentTime = getWIBTimeString();
     const timeStatus = getTimeStatus(row.jam_mulai, row.jam_selesai);
 
     res.json({
       id_jadwal: row.id_jadwal,
-      namaMapel: namaMapel,
-      namaGuru: namaGuru,
+      namaMapel,
+      namaGuru,
       jamPelajaran: `${jamMulai} – ${jamSelesai}`,
-      timeStatus: timeStatus,
+      timeStatus,
       jam_mulai: row.jam_mulai,
       jam_selesai: row.jam_selesai,
       serverTime: currentTime,
@@ -238,13 +267,10 @@ exports.getPresensiByIdKM = async (req, res) => {
 
 /* =======================
    CREATE PRESENSI BY KM
-   - Cek is_opened_by_admin: kalau admin sudah buka,
-     boleh presensi meski jam sudah lewat (sampai 23:59 hari ini)
 ======================= */
 exports.createPresensiByKM = async (req, res) => {
   try {
     const { id_jadwal, status, memberikan_tugas, keterangan } = req.body;
-
     const diabsen_oleh = req.user.id;
     const id_kelas_user = req.user.id_kelas;
     const tanggalHariIni = getWIBDate();
@@ -273,7 +299,6 @@ exports.createPresensiByKM = async (req, res) => {
       const now = new Date(getWIBISOString());
       const endOfDay = new Date(now);
       endOfDay.setHours(23, 59, 59, 999);
-
       if (now > endOfDay) {
         if (!isOpened) {
           return res.status(403).json({
@@ -371,6 +396,10 @@ exports.createPresensi = async (req, res) => {
 
 /* =======================
    GET ALL PRESENSI (ADMIN/PIKET)
+   - Admin lihat semua kelas → tidak filter target kelas
+   - Kalender yang di-exclude hanya yang global (berlaku semua)
+   - Kalender targeting kelas/tingkat/jurusan: di halaman admin,
+     jadwal tetap muncul; admin yang handle approve/reject
 ======================= */
 exports.getPresensi = async (req, res) => {
   try {
@@ -410,6 +439,8 @@ exports.getPresensi = async (req, res) => {
       )`;
     }
 
+    // Admin view: exclude jadwal yang kena kalender global saja
+    // Jadwal kelas tertentu tetap muncul agar admin bisa pantau
     const result = await pool.query(`
       SELECT 
         j.id_jadwal, j.hari, j.jam_mulai, j.jam_selesai, j.guru, j.id_kelas,
@@ -428,6 +459,7 @@ exports.getPresensi = async (req, res) => {
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
           WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND ka.target_type = 'global'
             AND (
               ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
               OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
@@ -453,7 +485,6 @@ exports.getPresensiSummary = async (req, res) => {
   try {
     const { tanggal, id_kelas } = req.query;
     const targetDate = tanggal || getWIBDate();
-
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const dateObj = new Date(targetDate + 'T00:00:00+07:00');
     const targetDay = dayNames[dateObj.getDay()];
@@ -483,6 +514,7 @@ exports.getPresensiSummary = async (req, res) => {
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
           WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND ka.target_type = 'global'
             AND (
               ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
               OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
@@ -514,11 +546,9 @@ exports.getPresensiById = async (req, res) => {
       `SELECT * FROM presensi_guru WHERE id_presensi = $1`,
       [req.params.id]
     );
-
     if (!result.rowCount) {
       return res.status(404).json({ message: 'Presensi tidak ditemukan' });
     }
-
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -544,7 +574,6 @@ exports.updatePresensi = async (req, res) => {
     }
 
     let fotoBaru = null;
-
     if (req.file) {
       const fotoLama = oldData.rows[0].foto_bukti;
       if (fotoLama) {
@@ -586,7 +615,6 @@ exports.resubmitPresensiByKM = async (req, res) => {
   try {
     const idPresensi = req.params.id;
     const { status, memberikan_tugas, keterangan } = req.body;
-
     const userId = req.user.id;
     const idKelas = req.user.id_kelas;
 
@@ -637,7 +665,6 @@ exports.resubmitPresensiByKM = async (req, res) => {
     }
 
     let fotoBaru = null;
-
     if (req.file) {
       if (presensi.foto_bukti) {
         const publicId = getPublicIdFromUrl(presensi.foto_bukti);
@@ -699,7 +726,6 @@ exports.deletePresensi = async (req, res) => {
     }
 
     await pool.query(`DELETE FROM presensi_guru WHERE id_presensi = $1`, [req.params.id]);
-
     res.json({ message: 'Presensi berhasil dihapus' });
   } catch (err) {
     console.error(err);
@@ -715,8 +741,7 @@ exports.approvePresensi = async (req, res) => {
     const { id } = req.params;
     const { status_approve: status, alasan_reject: alasan } = req.body;
 
-    let query;
-    let params;
+    let query, params;
 
     if (status === 'Rejected') {
       query = `
@@ -746,7 +771,6 @@ exports.approvePresensi = async (req, res) => {
     }
 
     const result = await pool.query(query, params);
-
     res.json({
       message: 'Status presensi berhasil diupdate',
       data: result.rows[0]
@@ -760,10 +784,11 @@ exports.approvePresensi = async (req, res) => {
 
 /* =======================
    GET RIWAYAT PRESENSI KM
+   - Filter kalender aware targeting (per kelas user)
 ======================= */
 exports.getRiwayatPresensiKM = async (req, res) => {
   try {
-    const { id_kelas } = req.user;
+    const { id_kelas, tingkat, jurusan } = req.user;
 
     if (!id_kelas) {
       return res.status(400).json({ message: 'KM tidak memiliki kelas' });
@@ -795,6 +820,24 @@ exports.getRiwayatPresensiKM = async (req, res) => {
       statusFilter = `AND p.status_approve = $${params.length}`;
     }
 
+    // Kalender filter untuk kelas ini
+    const kalenderExclude = `
+      AND NOT EXISTS (
+        SELECT 1 FROM kalender_akademik ka
+        WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+          AND (
+            ka.target_type = 'global'
+            OR (ka.target_type = 'tingkat' AND ka.target_value @> to_jsonb(ARRAY['${String(tingkat)}']::text[]))
+            OR (ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY['${jurusan}']::text[]))
+            OR (ka.target_type = 'kelas'   AND ka.target_value @> to_jsonb(ARRAY[${parseInt(id_kelas)}]::int[]))
+          )
+          AND (
+            ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+            OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+          )
+      )
+    `;
+
     const slotsCTE = `
       WITH slots AS (
         SELECT
@@ -819,14 +862,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
             WHEN 6 THEN 'Sabtu'
           END
           AND gs::date >= j.created_at::date
-          AND NOT EXISTS (
-            SELECT 1 FROM kalender_akademik ka
-            WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-              AND (
-                ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-                OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-              )
-          )
+          ${kalenderExclude}
         JOIN kelas k ON k.id = j.id_kelas
         LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       )
@@ -947,12 +983,12 @@ exports.getRiwayatPresensiKM = async (req, res) => {
 };
 
 /* =======================
-   DASHBOARD HARI INI
+   DASHBOARD HARI INI (KM/Piket)
+   - Exclude kalender global saja (admin lihat semua kelas)
 ======================= */
 exports.getDashboardToday = async (req, res) => {
   try {
     const today = getWIBDate();
-
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const dateObj = new Date(today + 'T00:00:00+07:00');
     const todayName = dayNames[dateObj.getDay()];
@@ -984,6 +1020,7 @@ exports.getDashboardToday = async (req, res) => {
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
           WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+            AND ka.target_type = 'global'
             AND (
               ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
               OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
@@ -1011,9 +1048,7 @@ exports.getDashboardToday = async (req, res) => {
 };
 
 /* =======================
-   BULK APPROVE / REJECT PRESENSI (ADMIN/PIKET)
-   - Requires app_config.bulk_approval_enabled = true
-   - Body: { ids: [1,2,3], status: 'Approved'|'Rejected', alasan?: '...' }
+   BULK APPROVE / REJECT PRESENSI
 ======================= */
 exports.bulkApprovePresensi = async (req, res) => {
   try {
@@ -1023,7 +1058,6 @@ exports.bulkApprovePresensi = async (req, res) => {
       return res.status(400).json({ message: 'ID presensi wajib diisi' });
     }
 
-    // Cek fitur aktif di app_config
     const enabled = await isBulkEnabled();
     if (!enabled) {
       return res.status(403).json({
@@ -1031,8 +1065,7 @@ exports.bulkApprovePresensi = async (req, res) => {
       });
     }
 
-    let query;
-    let params;
+    let query, params;
 
     if (status === 'Rejected') {
       query = `
@@ -1077,11 +1110,6 @@ exports.bulkApprovePresensi = async (req, res) => {
 
 /* =======================
    OPEN PRESENSI (ADMIN)
-   - Set is_opened_by_admin = true pada presensi yang sudah ada,
-     atau bisa juga pada jadwal yang belum dipresensi
-     (pakai id_jadwal + tanggal hari ini, bukan id_presensi)
-   - Body: { id_jadwal: 123 }
-   - Setelah dibuka, KM bisa presensi meski jam sudah lewat (sampai 23:59)
 ======================= */
 exports.openPresensi = async (req, res) => {
   try {
