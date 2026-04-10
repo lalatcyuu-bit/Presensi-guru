@@ -10,6 +10,17 @@ const {
 } = require('../utils/timezone');
 
 /* =======================
+   HELPER: CEK BULK APPROVAL ENABLED
+======================= */
+async function isBulkEnabled() {
+  const result = await pool.query(
+    `SELECT value FROM app_config WHERE key = 'bulk_approval_enabled'`
+  );
+  if (!result.rowCount) return true; // default enabled kalau row tidak ada
+  return result.rows[0].value === true;
+}
+
+/* =======================
    GET JADWAL KELAS HARI INI (KM)
 ======================= */
 exports.getJadwalKelasHariIni = async (req, res) => {
@@ -227,6 +238,8 @@ exports.getPresensiByIdKM = async (req, res) => {
 
 /* =======================
    CREATE PRESENSI BY KM
+   - Cek is_opened_by_admin: kalau admin sudah buka,
+     boleh presensi meski jam sudah lewat (sampai 23:59 hari ini)
 ======================= */
 exports.createPresensiByKM = async (req, res) => {
   try {
@@ -240,8 +253,9 @@ exports.createPresensiByKM = async (req, res) => {
       return res.status(400).json({ message: 'Data tidak lengkap' });
     }
 
+    // Validasi jadwal + pastikan milik kelas user + ambil flag is_opened_by_admin
     const jadwalResult = await pool.query(
-      `SELECT jam_mulai, jam_selesai FROM jadwal WHERE id_jadwal = $1 AND id_kelas = $2`,
+      `SELECT jam_mulai, jam_selesai, is_opened_by_admin FROM jadwal WHERE id_jadwal = $1 AND id_kelas = $2`,
       [id_jadwal, id_kelas_user]
     );
 
@@ -249,7 +263,7 @@ exports.createPresensiByKM = async (req, res) => {
       return res.status(404).json({ message: 'Jadwal tidak ditemukan atau bukan milik kelas Anda' });
     }
 
-    const { jam_mulai, jam_selesai } = jadwalResult.rows[0];
+    const { jam_mulai, jam_selesai, is_opened_by_admin: isOpened } = jadwalResult.rows[0];
     const currentTime = getWIBTimeString();
 
     if (currentTime < jam_mulai) {
@@ -257,7 +271,20 @@ exports.createPresensiByKM = async (req, res) => {
     }
 
     if (currentTime > jam_selesai) {
-      return res.status(400).json({ message: 'Waktu presensi sudah lewat. Jam pelajaran sudah selesai.' });
+      if (!isOpened) {
+        return res.status(400).json({ message: 'Waktu presensi sudah lewat. Jam pelajaran sudah selesai.' });
+      }
+
+      // Kalau admin sudah buka, masih boleh presensi sampai 23:59 hari ini
+      const now = new Date(getWIBISOString());
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      if (now > endOfDay) {
+        return res.status(403).json({
+          message: 'Presensi sudah lewat hari. Hubungi admin/piket.'
+        });
+      }
     }
 
     if (status === 'Hadir' && !req.file) {
@@ -809,16 +836,15 @@ exports.getRiwayatPresensiKM = async (req, res) => {
       )
     `;
 
-    // ─── COUNT + SUMMARY (tambah total_tidak_hadir_dengan_tugas) ───
     const countResult = await pool.query(
       `${slotsCTE}
        SELECT
-         COUNT(*)                                                                      AS total,
-         COUNT(*) FILTER (WHERE p.status = 'Hadir')                                   AS total_hadir,
-         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')                             AS total_tidak_hadir,
+         COUNT(*)                                                                        AS total,
+         COUNT(*) FILTER (WHERE p.status = 'Hadir')                                     AS total_hadir,
+         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')                               AS total_tidak_hadir,
          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS total_tidak_hadir_dengan_tugas,
-         COUNT(*) FILTER (WHERE p.status_approve = 'Rejected')                        AS total_ditolak,
-         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)                                AS total_belum
+         COUNT(*) FILTER (WHERE p.status_approve = 'Rejected')                          AS total_ditolak,
+         COUNT(*) FILTER (WHERE p.id_presensi IS NULL)                                  AS total_belum
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
@@ -984,6 +1010,110 @@ exports.getDashboardToday = async (req, res) => {
 
   } catch (err) {
     console.error('DASHBOARD ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   BULK APPROVE / REJECT PRESENSI (ADMIN/PIKET)
+   - Requires app_config.bulk_approval_enabled = true
+   - Body: { ids: [1,2,3], status: 'Approved'|'Rejected', alasan?: '...' }
+======================= */
+exports.bulkApprovePresensi = async (req, res) => {
+  try {
+    const { ids, status, alasan } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: 'ID presensi wajib diisi' });
+    }
+
+    // Cek fitur aktif di app_config
+    const enabled = await isBulkEnabled();
+    if (!enabled) {
+      return res.status(403).json({
+        message: 'Fitur bulk approval sedang dinonaktifkan oleh admin'
+      });
+    }
+
+    let query;
+    let params;
+
+    if (status === 'Rejected') {
+      query = `
+        UPDATE presensi_guru
+        SET
+          status_approve = 'Rejected',
+          alasan_reject  = $1,
+          rejected_at    = NOW(),
+          approved_by    = $2,
+          updated_at     = CURRENT_TIMESTAMP
+        WHERE id_presensi = ANY($3::int[])
+        RETURNING *
+      `;
+      params = [alasan || null, req.user.id, ids];
+    } else {
+      query = `
+        UPDATE presensi_guru
+        SET
+          status_approve = 'Approved',
+          alasan_reject  = NULL,
+          approved_by    = $1,
+          updated_at     = CURRENT_TIMESTAMP
+        WHERE id_presensi = ANY($2::int[])
+        RETURNING *
+      `;
+      params = [req.user.id, ids];
+    }
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      message: `Bulk ${status} berhasil`,
+      total: result.rowCount,
+      data: result.rows
+    });
+
+  } catch (err) {
+    console.error('BULK APPROVE ERROR:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* =======================
+   OPEN PRESENSI (ADMIN)
+   - Set is_opened_by_admin = true pada presensi yang sudah ada,
+     atau bisa juga pada jadwal yang belum dipresensi
+     (pakai id_jadwal + tanggal hari ini, bukan id_presensi)
+   - Body: { id_jadwal: 123 }
+   - Setelah dibuka, KM bisa presensi meski jam sudah lewat (sampai 23:59)
+======================= */
+exports.openPresensi = async (req, res) => {
+  try {
+    const { id_jadwal } = req.body;
+
+    if (!id_jadwal) {
+      return res.status(400).json({ message: 'id_jadwal wajib diisi' });
+    }
+
+    const result = await pool.query(
+      `UPDATE jadwal
+       SET is_opened_by_admin = true
+       WHERE id_jadwal = $1
+       RETURNING *`,
+      [id_jadwal]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Presensi berhasil dibuka oleh admin',
+      data: result.rows[0]
+    });
+
+  } catch (err) {
+    console.error('OPEN PRESENSI ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

@@ -17,11 +17,9 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/jadwal/today', auth, role.onlyKM, isLibur, controller.getJadwalKelasHariIni);
 
 // Get detail jadwal by ID
-// FIX #2a: tambah isLibur agar halaman create tidak bisa diakses saat libur/rapat
 router.get('/jadwal/:id_jadwal', auth, role.onlyKM, isLibur, controller.getJadwalByIdKM);
 
 // Create presensi oleh KM
-// FIX #2b: tambah isLibur agar submit tidak bisa saat libur/rapat
 router.post('/presensi', auth, role.onlyKM, isLibur, upload.single('foto'), controller.createPresensiByKM);
 
 // Get presensi by ID untuk KM (dipakai saat resubmit untuk pre-fill data)
@@ -29,7 +27,6 @@ router.post('/presensi', auth, role.onlyKM, isLibur, upload.single('foto'), cont
 router.get('/presensi/:id', auth, role.onlyKM, controller.getPresensiByIdKM);
 
 // Resubmit presensi yang ditolak oleh KM
-// FIX #2c: tambah isLibur — resubmit juga tidak boleh dilakukan saat libur/rapat
 router.put('/presensi/:id/resubmit', auth, role.onlyKM, isLibur, upload.single('foto'), controller.resubmitPresensiByKM);
 
 // ============================================
@@ -46,10 +43,19 @@ router.get('/', auth, role.onlyPiketOrAdmin, controller.getPresensi);
 router.get('/summary', auth, role.onlyPiketOrAdmin, controller.getPresensiSummary);
 
 // Get dashboard today
+// PENTING: harus SEBELUM /:id agar tidak ditangkap sebagai param
 router.get('/dashboard/today', auth, role.onlyPiketOrAdmin, controller.getDashboardToday);
 
 // Get riwayat presensi untuk KM
 router.get('/riwayat', auth, role.onlyKM, controller.getRiwayatPresensiKM);
+
+// Bulk approve/reject presensi
+// PENTING: harus SEBELUM /:id agar tidak bentrok
+router.put('/bulk-approve', auth, role.onlyPiketOrAdmin, controller.bulkApprovePresensi);
+
+// Open presensi (Admin) — buka akses presensi meski jam sudah lewat
+// PENTING: harus SEBELUM /:id agar tidak bentrok
+router.put('/open', auth, role.onlyPiketOrAdmin, controller.openPresensi);
 
 // Get presensi by ID
 router.get('/:id', auth, role.onlyPiketOrAdmin, controller.getPresensiById);
