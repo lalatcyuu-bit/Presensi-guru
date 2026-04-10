@@ -28,6 +28,7 @@ app.use('/presensi', require('./routes/presensi.routes'));
 app.use('/kelas', require('./routes/kelas.routes'));
 app.use('/km', require('./routes/presensi.routes'));
 app.use('/kalender', require('./routes/kalender.routes'));
+app.use('/settings', require('./routes/settings.routes'));
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {

@@ -253,7 +253,6 @@ exports.createPresensiByKM = async (req, res) => {
       return res.status(400).json({ message: 'Data tidak lengkap' });
     }
 
-    // Validasi jadwal + pastikan milik kelas user + ambil flag is_opened_by_admin
     const jadwalResult = await pool.query(
       `SELECT jam_mulai, jam_selesai, is_opened_by_admin FROM jadwal WHERE id_jadwal = $1 AND id_kelas = $2`,
       [id_jadwal, id_kelas_user]
@@ -271,19 +270,16 @@ exports.createPresensiByKM = async (req, res) => {
     }
 
     if (currentTime > jam_selesai) {
-      if (!isOpened) {
-        return res.status(400).json({ message: 'Waktu presensi sudah lewat. Jam pelajaran sudah selesai.' });
-      }
-
-      // Kalau admin sudah buka, masih boleh presensi sampai 23:59 hari ini
       const now = new Date(getWIBISOString());
       const endOfDay = new Date(now);
       endOfDay.setHours(23, 59, 59, 999);
 
       if (now > endOfDay) {
-        return res.status(403).json({
-          message: 'Presensi sudah lewat hari. Hubungi admin/piket.'
-        });
+        if (!isOpened) {
+          return res.status(403).json({
+            message: 'Presensi sudah lewat hari. Hubungi admin/piket untuk membuka presensi.'
+          });
+        }
       }
     }
 
