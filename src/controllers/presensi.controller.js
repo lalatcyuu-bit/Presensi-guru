@@ -457,14 +457,22 @@ exports.getPresensi = async (req, res) => {
       WHERE j.hari = $2
         AND j.created_at::date <= $1
         AND NOT EXISTS (
-          SELECT 1 FROM kalender_akademik ka
-          WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-            AND ka.target_type = 'global'
-            AND (
-              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-            )
-        )
+  SELECT 1 FROM kalender_akademik ka
+  WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+    AND (
+      ka.target_type = 'global'
+      OR (ka.target_type = 'tingkat' 
+          AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]))
+      OR (ka.target_type = 'jurusan' 
+          AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]))
+      OR (ka.target_type = 'kelas' 
+          AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]))
+    )
+    AND (
+      ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+      OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+    )
+)
         ${kelasClause}
         ${statusClause}
         ${searchClause}
@@ -497,31 +505,40 @@ exports.getPresensiSummary = async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (
-          WHERE p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'
-        ) AS pending,
-        COUNT(*) FILTER (WHERE p.status_approve = 'Approved') AS approved,
-        COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS rejected,
-        COUNT(*) FILTER (WHERE p.id_presensi IS NULL)         AS belum,
-        COUNT(*)                                              AS total
-      FROM jadwal j
-      JOIN kelas k ON k.id = j.id_kelas
-      LEFT JOIN presensi_guru p
-        ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
-      WHERE j.hari = $2
-        AND j.created_at::date <= $1
-        AND NOT EXISTS (
-          SELECT 1 FROM kalender_akademik ka
-          WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-            AND ka.target_type = 'global'
-            AND (
-              ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-              OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-            )
+  SELECT
+    COUNT(*) FILTER (
+      WHERE p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'
+    ) AS pending,
+    COUNT(*) FILTER (WHERE p.status_approve = 'Approved') AS approved,
+    COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS rejected,
+    COUNT(*) FILTER (WHERE p.id_presensi IS NULL)         AS belum,
+    COUNT(*)                                              AS total
+  FROM jadwal j
+  JOIN kelas k ON k.id = j.id_kelas
+  LEFT JOIN jurusan jr ON jr.id = k.id_jurusan   -- tambah ini
+  LEFT JOIN presensi_guru p
+    ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
+  WHERE j.hari = $2
+    AND j.created_at::date <= $1
+    AND NOT EXISTS (
+      SELECT 1 FROM kalender_akademik ka
+      WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+        AND (
+          ka.target_type = 'global'
+          OR (ka.target_type = 'tingkat'
+              AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]))
+          OR (ka.target_type = 'jurusan'
+              AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]))
+          OR (ka.target_type = 'kelas'
+              AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]))
         )
-        ${kelasClause}
-    `, params);
+        AND (
+          ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+          OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+        )
+    )
+    ${kelasClause}
+`, params);
 
     const row = result.rows[0];
     res.json({
@@ -1012,6 +1029,8 @@ exports.getDashboardToday = async (req, res) => {
         COUNT(j.id_jadwal) AS total_jadwal
 
       FROM jadwal j
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       LEFT JOIN presensi_guru p
         ON p.id_jadwal = j.id_jadwal
         AND p.tanggal = $1
@@ -1020,7 +1039,15 @@ exports.getDashboardToday = async (req, res) => {
         AND NOT EXISTS (
           SELECT 1 FROM kalender_akademik ka
           WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-            AND ka.target_type = 'global'
+            AND (
+              ka.target_type = 'global'
+              OR (ka.target_type = 'tingkat'
+                  AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]))
+              OR (ka.target_type = 'jurusan'
+                  AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]))
+              OR (ka.target_type = 'kelas'
+                  AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]))
+            )
             AND (
               ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
               OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
