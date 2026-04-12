@@ -981,12 +981,14 @@ exports.getTopGuruTidakHadir = async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        nama_guru, total_tidak_hadir,
+        nama_guru, total_tidak_hadir, total_tidak_hadir_tugas, total_tidak_hadir_murni,
         RANK() OVER (ORDER BY total_tidak_hadir DESC) AS rank
       FROM (
         SELECT
           (j.guru->>'nama_guru') AS nama_guru,
-          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS total_tidak_hadir_tugas,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)) AS total_tidak_hadir_murni
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
         JOIN kelas k ON k.id = j.id_kelas
@@ -1005,7 +1007,9 @@ exports.getTopGuruTidakHadir = async (req, res) => {
       data: result.rows.map(r => ({
         rank: parseInt(r.rank),
         nama_guru: r.nama_guru,
-        total_tidak_hadir: parseInt(r.total_tidak_hadir)
+        total_tidak_hadir: parseInt(r.total_tidak_hadir),
+        total_tidak_hadir_tugas: parseInt(r.total_tidak_hadir_tugas),
+        total_tidak_hadir_murni: parseInt(r.total_tidak_hadir_murni),
       }))
     });
   } catch (err) {
@@ -1321,25 +1325,27 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
     `, params),
 
     pool.query(`
-      SELECT
-        nama_guru, total_tidak_hadir,
-        RANK() OVER (ORDER BY total_tidak_hadir DESC) AS rank
-      FROM (
-        SELECT
-          (j.guru->>'nama_guru')                                   AS nama_guru,
-          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')        AS total_tidak_hadir
-        FROM presensi_guru p
-        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-        JOIN kelas k ON k.id = j.id_kelas
-        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
-        WHERE ${dateFilter}
-          AND p.status_approve = 'Approved'
-          ${kelasFilter}
-          ${KALENDER_PRESENSI_EXCLUDE}
-        GROUP BY nama_guru
-      ) data
-      ORDER BY total_tidak_hadir DESC LIMIT 10
-    `, params),
+  SELECT
+    nama_guru, total_tidak_hadir, total_tidak_hadir_tugas, total_tidak_hadir_murni,
+    RANK() OVER (ORDER BY total_tidak_hadir DESC) AS rank
+  FROM (
+    SELECT
+      (j.guru->>'nama_guru') AS nama_guru,
+      COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
+      COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS total_tidak_hadir_tugas,
+      COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)) AS total_tidak_hadir_murni
+    FROM presensi_guru p
+    JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+    JOIN kelas k ON k.id = j.id_kelas
+    LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+    WHERE ${dateFilter}
+      AND p.status_approve = 'Approved'
+      ${kelasFilter}
+      ${KALENDER_PRESENSI_EXCLUDE}
+    GROUP BY nama_guru
+  ) data
+  ORDER BY total_tidak_hadir DESC LIMIT 10
+`, params),
   ]);
 
   const s = summaryResult.rows[0];
@@ -1382,6 +1388,8 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
       rank: parseInt(r.rank),
       nama_guru: r.nama_guru,
       total_tidak_hadir: parseInt(r.total_tidak_hadir),
+      total_tidak_hadir_tugas: parseInt(r.total_tidak_hadir_tugas),
+      total_tidak_hadir_murni: parseInt(r.total_tidak_hadir_murni),
     })),
   };
 }

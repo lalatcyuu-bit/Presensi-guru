@@ -107,14 +107,16 @@ function closingSection(top_hadir, top_tidak_hadir, todayStr) {
         </tr>`).join('')
         : `<tr><td colspan="3" class="tc muted" style="padding:10px">—</td></tr>`
 
-    const rowsTidak = top_tidak_hadir.length
-        ? top_tidak_hadir.map(g => `
-        <tr>
-          <td class="tc gray">${g.rank}</td>
-          <td>${esc(g.nama_guru)}</td>
-          <td class="tc orange-txt">${g.total_tidak_hadir}x</td>
-        </tr>`).join('')
-        : `<tr><td colspan="3" class="tc muted" style="padding:10px">—</td></tr>`
+  const rowsTidak = top_tidak_hadir.length
+    ? top_tidak_hadir.map(g => `
+    <tr>
+      <td class="tc gray">${g.rank}</td>
+      <td>${esc(g.nama_guru)}</td>
+      <td class="tc red-txt bold-pct">${g.total_tidak_hadir_murni}x</td>
+      <td class="tc orange-txt">${g.total_tidak_hadir_tugas}x</td>
+      <td class="tc red-txt bold-pct">${g.total_tidak_hadir}x</td>
+    </tr>`).join('')
+    : `<tr><td colspan="5" class="tc muted" style="padding:10px">—</td></tr>`
 
     return `
     <div class="top-grid">
@@ -131,7 +133,7 @@ function closingSection(top_hadir, top_tidak_hadir, todayStr) {
         <div class="section-title red-title">IV. TOP 10 KETIDAKHADIRAN</div>
         <table class="rank-table">
           <thead>
-            <tr><th>#</th><th>Nama Guru</th><th>Jml</th></tr>
+            <tr><th>#</th><th>Nama Guru</th><th>Murni</th><th>+ Tugas</th><th>Total</th></tr>
           </thead>
           <tbody>${rowsTidak}</tbody>
         </table>
