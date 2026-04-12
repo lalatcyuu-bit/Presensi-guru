@@ -83,7 +83,7 @@ const KALENDER_SLOT_EXCLUDE = (dateExpr = 'gs::date') => `
         ka.target_type = 'global'
         OR (ka.target_type = 'kelas'   AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas]::int[]))
         OR (ka.target_type = 'tingkat' AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
-        OR (ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan]::text[]))
+        OR (ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
       )
       AND (
         ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
@@ -97,14 +97,21 @@ const KALENDER_PRESENSI_EXCLUDE = `
   AND NOT EXISTS (
     SELECT 1 FROM kalender_akademik ka
     WHERE p.tanggal BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-      AND ka.target_type = 'global'
+      AND (
+        ka.target_type = 'global'
+        OR (ka.target_type = 'kelas'
+            AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas]::int[]))
+        OR (ka.target_type = 'tingkat'
+            AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
+        OR (ka.target_type = 'jurusan'
+            AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
+      )
       AND (
         ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
         OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
       )
   )
 `;
-
 /* =======================
    GET ALL GURU
 ======================= */
@@ -342,6 +349,8 @@ exports.getStatistikGuru = async (req, res) => {
         COUNT(*) AS total
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE (j.guru->>'id_guru')::int = $1
         AND ${dateFilter}
         AND p.status_approve = 'Approved'
@@ -391,6 +400,8 @@ exports.getSummaryStats = async (req, res) => {
         ) AS tidak_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE ${dateFilter}
         AND p.status_approve = 'Approved'
         ${kelasFilter}
@@ -411,6 +422,8 @@ exports.getSummaryStats = async (req, res) => {
         COUNT(*) FILTER (WHERE p.status = 'Hadir') AS hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE ${prevFilterFinal}
         AND p.status_approve = 'Approved'
         ${kelasFilter}
@@ -486,6 +499,7 @@ exports.getPerformaGuru = async (req, res) => {
         AND gs::date >= j.created_at::date
         JOIN kelas k ON k.id = j.id_kelas
         LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+        WHERE TRUE
         ${KALENDER_SLOT_EXCLUDE('gs::date')}
         ${kelasFilter}
       ),
@@ -569,6 +583,8 @@ exports.getBarHadirVsTidak = async (req, res) => {
         COUNT(*) AS total
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE ${dateFilter}
         AND p.status_approve = 'Approved'
         ${extraFilter}
@@ -637,6 +653,7 @@ exports.getUnpresensiStats = async (req, res) => {
         AND gs::date >= j.created_at::date
         JOIN kelas k ON k.id = j.id_kelas
         LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+        WHERE TRUE
         ${KALENDER_SLOT_EXCLUDE('gs::date')}
         ${kelasFilter}
       )
@@ -680,6 +697,8 @@ exports.getLineHadirPerGuru = async (req, res) => {
         SELECT (j.guru->>'nama_guru') AS nama_guru
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
         WHERE ${dateFilter}
           AND p.status = 'Hadir'
           AND p.status_approve = 'Approved'
@@ -706,6 +725,8 @@ exports.getLineHadirPerGuru = async (req, res) => {
         COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE ${dateFilter}
         AND p.status_approve = 'Approved'
         AND (j.guru->>'nama_guru') = ANY($1)
@@ -738,6 +759,8 @@ exports.getLineHadirPerGuru = async (req, res) => {
         SELECT (j.guru->>'nama_guru') AS nama_guru
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
         WHERE ${dateFilter}
           AND p.status_approve = 'Approved'
           ${KALENDER_PRESENSI_EXCLUDE}
@@ -776,6 +799,8 @@ exports.getTrenKehadiranKeseluruhan = async (req, res) => {
         COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)) AS total_tidak_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE ${dateFilter}
         AND p.status_approve = 'Approved'
         ${kelasFilter}
@@ -831,6 +856,8 @@ exports.getTopGuruHadir = async (req, res) => {
           COUNT(*) AS total_jadwal
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
         WHERE ${dateFilter}
           AND p.status_approve = 'Approved'
           ${kelasFilter}
@@ -883,6 +910,8 @@ exports.getTopGuruTidakHadir = async (req, res) => {
           COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
         WHERE ${dateFilter}
           AND p.status_approve = 'Approved'
           ${kelasFilter}
@@ -958,7 +987,7 @@ exports.getDashboardToday = async (req, res) => {
                 ka.target_type = 'global'
                 OR (ka.target_type = 'kelas'   AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas]::int[]))
                 OR (ka.target_type = 'tingkat' AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
-                OR (ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan]::text[]))
+                OR (ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
               )
               AND (
                 ka.jam_mulai  IS NULL OR ka.jam_selesai IS NULL
@@ -1122,6 +1151,8 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
         )                                                               AS tidak_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+      JOIN kelas k ON k.id = j.id_kelas
+      LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       WHERE ${dateFilter}
         AND p.status_approve = 'Approved'
         ${kelasFilter}
@@ -1144,6 +1175,7 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
         AND gs::date >= j.created_at::date
         JOIN kelas k ON k.id = j.id_kelas
         LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+        WHERE TRUE
         ${KALENDER_SLOT_EXCLUDE('gs::date')}
         ${kelasFilter}
       ),
@@ -1193,6 +1225,8 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
           COUNT(*)                                            AS total_jadwal
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
         WHERE ${dateFilter}
           AND p.status_approve = 'Approved'
           ${kelasFilter}
@@ -1212,6 +1246,8 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
           COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir')        AS total_tidak_hadir
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
         WHERE ${dateFilter}
           AND p.status_approve = 'Approved'
           ${kelasFilter}

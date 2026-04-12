@@ -5,11 +5,11 @@ module.exports = async function isLibur(req, res, next) {
   try {
     const hariIni = getWIBDayName();
 
-    if (hariIni === 'Sabtu' || hariIni === 'Minggu') {
-      return res.status(400).json({
-        message: 'Hari ini tidak ada KBM (Weekend)'
-      });
-    }
+    // if (hariIni === 'Sabtu' || hariIni === 'Minggu') {
+    //   return res.status(400).json({
+    //     message: 'Hari ini tidak ada KBM (Weekend)'
+    //   });
+    // }
 
     const tanggal = getWIBDate();
     const jamSekarang = getWIBTimeString();
