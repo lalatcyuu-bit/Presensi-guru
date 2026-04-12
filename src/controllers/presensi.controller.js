@@ -475,13 +475,13 @@ exports.createPresensi = async (req, res) => {
 ======================= */
 exports.getPresensiSummary = async (req, res) => {
   try {
-    const { tanggal, id_kelas } = req.query;
-    const targetDate = tanggal || getWIBDate();
-    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-    const dateObj = new Date(targetDate + 'T00:00:00+07:00');
-    const targetDay = dayNames[dateObj.getDay()];
+    const { tanggal, tanggal_mulai, tanggal_selesai, id_kelas } = req.query;
 
-    const params = [targetDate, targetDay];
+    // Support single tanggal (legacy) atau range
+    const dateStart = tanggal_mulai || tanggal || getWIBDate();
+    const dateEnd   = tanggal_selesai || tanggal || getWIBDate();
+
+    const params = [dateStart, dateEnd];
     let kelasClause = '';
     if (id_kelas) {
       params.push(parseInt(id_kelas));
@@ -491,46 +491,62 @@ exports.getPresensiSummary = async (req, res) => {
     const result = await pool.query(`
   SELECT
     COUNT(*) FILTER (
-      WHERE p.id_presensi IS NOT NULL AND p.status_approve = 'Pending'
+      WHERE id_presensi IS NOT NULL AND status_approve = 'Pending'
     ) AS pending,
-    COUNT(*) FILTER (WHERE p.status_approve = 'Approved') AS approved,
-    COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS rejected,
-    COUNT(*) FILTER (WHERE p.id_presensi IS NULL)         AS belum,
-    COUNT(*)                                              AS total
-  FROM jadwal j
-  JOIN kelas k ON k.id = j.id_kelas
-  LEFT JOIN jurusan jr ON jr.id = k.id_jurusan   -- tambah ini
-  LEFT JOIN presensi_guru p
-    ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
-  WHERE j.hari = $2
-    AND j.created_at::date <= $1
-    AND NOT EXISTS (
-  SELECT 1 FROM kalender_akademik ka
-  WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-    AND (
-      ka.target_type = 'global'
-      OR (ka.target_type = 'tingkat'
-          AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
-      OR (ka.target_type = 'jurusan'
-          AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
-      OR (ka.target_type = 'kelas'
-          AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]::int[]))
+    COUNT(*) FILTER (WHERE status_approve = 'Approved') AS approved,
+    COUNT(*) FILTER (WHERE status_approve = 'Rejected') AS rejected,
+    COUNT(*) FILTER (WHERE id_presensi IS NULL)         AS belum,
+    COUNT(*)                                            AS total
+  FROM (
+    SELECT DISTINCT ON (j.id_jadwal, gs::date)
+      j.id_jadwal,
+      j.id_kelas,
+      j.hari,
+      j.jam_mulai,
+      j.jam_selesai,
+      k.tingkat,
+      jr.nama_jurusan AS jurusan,
+      p.id_presensi,
+      p.status_approve
+    FROM generate_series($1::date, $2::date, '1 day'::interval) gs
+    JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
+      WHEN 0 THEN 'Minggu' WHEN 1 THEN 'Senin' WHEN 2 THEN 'Selasa'
+      WHEN 3 THEN 'Rabu'   WHEN 4 THEN 'Kamis' WHEN 5 THEN 'Jumat'
+      WHEN 6 THEN 'Sabtu'
+    END
+    AND gs::date >= j.created_at::date
+    JOIN kelas k ON k.id = j.id_kelas
+    LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+    LEFT JOIN presensi_guru p
+      ON p.id_jadwal = j.id_jadwal AND p.tanggal = gs::date
+    WHERE NOT EXISTS (
+      SELECT 1 FROM kalender_akademik ka
+      WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+        AND (
+          ka.target_type = 'global'
+          OR (ka.target_type = 'tingkat'
+              AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
+          OR (ka.target_type = 'jurusan'
+              AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
+          OR (ka.target_type = 'kelas'
+              AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]::int[]))
+        )
+        AND (
+          ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+          OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+        )
     )
-    AND (
-      ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-      OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-    )
-)
     ${kelasClause}
+  ) AS slots
 `, params);
 
     const row = result.rows[0];
     res.json({
-      pending: parseInt(row.pending),
+      pending:  parseInt(row.pending),
       approved: parseInt(row.approved),
       rejected: parseInt(row.rejected),
-      belum: parseInt(row.belum),
-      total: parseInt(row.total),
+      belum:    parseInt(row.belum),
+      total:    parseInt(row.total),
     });
   } catch (err) {
     console.error('getPresensiSummary ERROR:', err);
@@ -1201,14 +1217,14 @@ exports.openPresensi = async (req, res) => {
 ======================= */
 exports.getPresensi = async (req, res) => {
   try {
-    const { tanggal, id_kelas, status, search } = req.query;
+    const { tanggal, tanggal_mulai, tanggal_selesai, id_kelas, status, search } = req.query;
 
-    const targetDate = tanggal || getWIBDate();
+    const dateStart = tanggal_mulai || tanggal || getWIBDate();
+    const dateEnd = tanggal_selesai || tanggal || getWIBDate();
+
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-    const dateObj = new Date(targetDate + 'T00:00:00+07:00');
-    const targetDay = dayNames[dateObj.getDay()];
 
-    const params = [targetDate, targetDay];
+    const params = [dateStart, dateEnd];
     let kelasClause = '';
     let statusClause = '';
     let searchClause = '';
@@ -1238,47 +1254,50 @@ exports.getPresensi = async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT 
+      SELECT
         j.id_jadwal, j.hari, j.jam_mulai, j.jam_selesai, j.guru, j.id_kelas,
+        gs::date AS tanggal_slot,
         k.name AS kelas_name, k.tingkat,
         jr.nama_jurusan AS jurusan,
         p.id_presensi, p.tanggal, p.status, p.foto_bukti,
         p.memberikan_tugas, p.catatan, p.status_approve, p.alasan_reject,
         p.diabsen_oleh, p.approved_by, p.created_at, p.updated_at,
-        -- BARU: info opened status untuk tombol "Buka" di tab belum
         CASE WHEN jd.id IS NOT NULL THEN true ELSE false END AS is_opened_by_admin,
         jd.opened_at
-      FROM jadwal j
+      FROM generate_series($1::date, $2::date, '1 day'::interval) gs
+      JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
+        WHEN 0 THEN 'Minggu' WHEN 1 THEN 'Senin' WHEN 2 THEN 'Selasa'
+        WHEN 3 THEN 'Rabu'   WHEN 4 THEN 'Kamis' WHEN 5 THEN 'Jumat'
+        WHEN 6 THEN 'Sabtu'
+      END
+      AND gs::date >= j.created_at::date
       JOIN kelas k ON k.id = j.id_kelas
       LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
       LEFT JOIN presensi_guru p
-        ON p.id_jadwal = j.id_jadwal AND p.tanggal = $1
-      -- BARU: join untuk cek apakah sudah dibuka untuk tanggal ini
+        ON p.id_jadwal = j.id_jadwal AND p.tanggal = gs::date
       LEFT JOIN jadwal_dibuka jd
-        ON jd.id_jadwal = j.id_jadwal AND jd.tanggal = $1
-      WHERE j.hari = $2
-        AND j.created_at::date <= $1
-       AND NOT EXISTS (
-  SELECT 1 FROM kalender_akademik ka
-  WHERE $1::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-    AND (
-      ka.target_type = 'global'
-      OR (ka.target_type = 'tingkat'
-          AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
-      OR (ka.target_type = 'jurusan'
-          AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
-      OR (ka.target_type = 'kelas'
-          AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]::int[]))
-    )
-    AND (
-      ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-      OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-    )
-)
-        ${kelasClause}
-        ${statusClause}
-        ${searchClause}
-      ORDER BY k.name ASC, j.jam_mulai ASC
+        ON jd.id_jadwal = j.id_jadwal AND jd.tanggal = gs::date
+      WHERE NOT EXISTS (
+        SELECT 1 FROM kalender_akademik ka
+        WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+          AND (
+            ka.target_type = 'global'
+            OR (ka.target_type = 'tingkat'
+                AND ka.target_value @> to_jsonb(ARRAY[k.tingkat::text]::text[]))
+            OR (ka.target_type = 'jurusan'
+                AND ka.target_value @> to_jsonb(ARRAY[jr.nama_jurusan::text]::text[]))
+            OR (ka.target_type = 'kelas'
+                AND ka.target_value @> to_jsonb(ARRAY[j.id_kelas::int]::int[]))
+          )
+          AND (
+            ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+            OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+          )
+      )
+      ${kelasClause}
+      ${statusClause}
+      ${searchClause}
+      ORDER BY gs::date DESC, k.name ASC, j.jam_mulai ASC
     `, params);
 
     res.json(result.rows);
