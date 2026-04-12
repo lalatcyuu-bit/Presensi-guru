@@ -486,8 +486,12 @@ exports.getSummaryStats = async (req, res) => {
 ======================= */
 exports.getPerformaGuru = async (req, res) => {
   try {
-    const { range, id_kelas, date_from, date_to } = req.query;
+    const { range, id_kelas, date_from, date_to, search, limit: limitRaw, offset: offsetRaw } = req.query;
     const { dateStart, dateEnd } = getDateRange(range, date_from, date_to);
+
+    const fetchAll = limitRaw === 'all';
+    const limit = fetchAll ? null : (parseInt(limitRaw, 10) || 20);
+    const offset = fetchAll ? null : (parseInt(offsetRaw, 10) || 0);
 
     const params = [];
     let kelasFilter = '';
@@ -496,11 +500,26 @@ exports.getPerformaGuru = async (req, res) => {
       kelasFilter = `AND j.id_kelas = $${params.length}`;
     }
 
-    // Untuk custom range, batasi dateEnd maksimal hari ini
-    // agar slot masa depan tidak membengkakkan total_slot & tidak_dipresensi
     const effectiveDateEnd = range === 'custom'
       ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
-      : dateEnd
+      : dateEnd;
+
+    // search filter di level CTE hasil
+    let searchFilter = '';
+    if (search) {
+      params.push(`%${search}%`);
+      searchFilter = `WHERE nama_guru ILIKE $${params.length}`;
+    }
+
+    // limit/offset hanya kalau bukan fetchAll
+    let limitClause = '';
+    if (!fetchAll) {
+      params.push(limit);
+      const limitIdx = params.length;
+      params.push(offset);
+      const offsetIdx = params.length;
+      limitClause = `LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+    }
 
     const result = await pool.query(`
       WITH slots AS (
@@ -515,12 +534,8 @@ exports.getPerformaGuru = async (req, res) => {
           '1 day'::interval
         ) gs
         JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
-          WHEN 0 THEN 'Minggu'
-          WHEN 1 THEN 'Senin'
-          WHEN 2 THEN 'Selasa'
-          WHEN 3 THEN 'Rabu'
-          WHEN 4 THEN 'Kamis'
-          WHEN 5 THEN 'Jumat'
+          WHEN 0 THEN 'Minggu' WHEN 1 THEN 'Senin' WHEN 2 THEN 'Selasa'
+          WHEN 3 THEN 'Rabu'   WHEN 4 THEN 'Kamis' WHEN 5 THEN 'Jumat'
           WHEN 6 THEN 'Sabtu'
         END
         AND gs::date >= j.created_at::date
@@ -531,40 +546,37 @@ exports.getPerformaGuru = async (req, res) => {
         ${kelasFilter}
       ),
       slots_done AS (
-        SELECT *
-        FROM slots
+        SELECT * FROM slots
         WHERE
           tanggal < (NOW() AT TIME ZONE 'Asia/Jakarta')::date
           OR (
             tanggal = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
             AND jam_selesai <= (NOW() AT TIME ZONE 'Asia/Jakarta')::time
           )
+      ),
+      aggregated AS (
+        SELECT
+          sd.nama_guru,
+          COUNT(*)                                                                     AS total_slot,
+          COUNT(*) FILTER (WHERE p.status = 'Hadir'        AND p.status_approve = 'Approved') AS hadir,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir'  AND p.memberikan_tugas = true  AND p.status_approve = 'Approved') AS tidak_hadir_tugas,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir'  AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL) AND p.status_approve = 'Approved') AS tidak_hadir,
+          COUNT(*) FILTER (WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected'))    AS tidak_dipresensi
+        FROM slots_done sd
+        LEFT JOIN presensi_guru p ON p.id_jadwal = sd.id_jadwal AND p.tanggal = sd.tanggal
+        GROUP BY sd.nama_guru
+      ),
+      filtered AS (
+        SELECT * FROM aggregated
+        ${searchFilter}
       )
-      SELECT
-        sd.nama_guru,
-        COUNT(*) AS total_slot,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Hadir' AND p.status_approve = 'Approved'
-        ) AS hadir,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Tidak Hadir'
-            AND p.memberikan_tugas = true
-            AND p.status_approve = 'Approved'
-        ) AS tidak_hadir_tugas,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Tidak Hadir'
-            AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)
-            AND p.status_approve = 'Approved'
-        ) AS tidak_hadir,
-        COUNT(*) FILTER (
-          WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected')
-        ) AS tidak_dipresensi
-      FROM slots_done sd
-      LEFT JOIN presensi_guru p
-        ON p.id_jadwal = sd.id_jadwal AND p.tanggal = sd.tanggal
-      GROUP BY sd.nama_guru
-      ORDER BY hadir DESC, sd.nama_guru ASC
+      SELECT *, COUNT(*) OVER () AS total_count
+      FROM filtered
+      ORDER BY hadir DESC, nama_guru ASC
+      ${limitClause}
     `, params);
+
+    const totalCount = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
 
     const data = result.rows.map(r => {
       const totalSlot = parseInt(r.total_slot);
@@ -576,11 +588,15 @@ exports.getPerformaGuru = async (req, res) => {
         tidak_hadir_tugas: parseInt(r.tidak_hadir_tugas),
         tidak_hadir: parseInt(r.tidak_hadir),
         tidak_dipresensi: parseInt(r.tidak_dipresensi),
-        pct_hadir: totalSlot > 0 ? Math.round((hadir / totalSlot) * 100) : 0
+        pct_hadir: totalSlot > 0 ? Math.round((hadir / totalSlot) * 100) : 0,
       };
     });
 
-    res.json({ range: range || 'bulan', data });
+    res.json({
+      range: range || 'bulan',
+      total: totalCount,
+      data,
+    });
   } catch (err) {
     console.error('PERFORMA GURU ERROR:', err);
     res.status(500).json({ message: 'Server error' });
