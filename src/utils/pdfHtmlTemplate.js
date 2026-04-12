@@ -75,21 +75,30 @@ function tableHead() {
 }
 
 function tableRows(rows, startIdx) {
-    if (!rows.length) {
-        return `<tr><td colspan="8" class="tc muted" style="padding:16px">Tidak ada data untuk periode ini</td></tr>`
-    }
-    return rows.map((g, i) => `
+  if (!rows.length) {
+    return `<tr><td colspan="8" class="tc muted" style="padding:16px">Tidak ada data untuk periode ini</td></tr>`
+  }
+  return rows.map((g, i) => {
+    const ditolakLabel = g.ditolak > 0
+      ? g.ditolak === g.tidak_dipresensi
+        ? ` <span style="font-size:8px;color:#dc2626">(semua ditolak)</span>`
+        : ` <span style="font-size:8px;color:#dc2626">(${g.ditolak} ditolak)</span>`
+      : ''
+
+    return `
     <tr class="${i % 2 === 0 ? 'even' : ''}">
       <td class="tc gray">${startIdx + i + 1}</td>
       <td class="bold-name">${esc(g.nama_guru)}</td>
       <td class="tc green-txt">${g.hadir}</td>
       <td class="tc orange-txt">${g.tidak_hadir_tugas}</td>
       <td class="tc red-txt">${g.tidak_hadir}</td>
-      <td class="tc ${g.tidak_dipresensi > 0 ? 'orange-txt' : 'muted'}">${g.tidak_dipresensi}</td>
+      <td class="tc ${g.tidak_dipresensi > 0 ? 'orange-txt' : 'muted'}">
+        ${g.tidak_dipresensi}${ditolakLabel}
+      </td>
       <td class="tc bold-pct" style="color:${pctColor(g.pct_hadir)}">${g.pct_hadir}%</td>
       <td class="tc"><span class="badge ${badgeCls(g.pct_hadir)}">${badgeLbl(g.pct_hadir)}</span></td>
     </tr>`
-    ).join('')
+  }).join('')
 }
 
 function guruTable(rows, startIdx) {

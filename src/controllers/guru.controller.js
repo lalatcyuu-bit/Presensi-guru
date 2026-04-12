@@ -504,14 +504,12 @@ exports.getPerformaGuru = async (req, res) => {
       ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
       : dateEnd;
 
-    // search filter di level CTE hasil
     let searchFilter = '';
     if (search) {
       params.push(`%${search}%`);
       searchFilter = `WHERE nama_guru ILIKE $${params.length}`;
     }
 
-    // limit/offset hanya kalau bukan fetchAll
     let limitClause = '';
     if (!fetchAll) {
       params.push(limit);
@@ -557,11 +555,12 @@ exports.getPerformaGuru = async (req, res) => {
       aggregated AS (
         SELECT
           sd.nama_guru,
-          COUNT(*)                                                                     AS total_slot,
-          COUNT(*) FILTER (WHERE p.status = 'Hadir'        AND p.status_approve = 'Approved') AS hadir,
-          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir'  AND p.memberikan_tugas = true  AND p.status_approve = 'Approved') AS tidak_hadir_tugas,
-          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir'  AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL) AND p.status_approve = 'Approved') AS tidak_hadir,
-          COUNT(*) FILTER (WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected'))    AS tidak_dipresensi
+          COUNT(*) AS total_slot,
+          COUNT(*) FILTER (WHERE p.status = 'Hadir' AND p.status_approve = 'Approved') AS hadir,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true AND p.status_approve = 'Approved') AS tidak_hadir_tugas,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL) AND p.status_approve = 'Approved') AS tidak_hadir,
+          COUNT(*) FILTER (WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected')) AS tidak_dipresensi,
+          COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS ditolak
         FROM slots_done sd
         LEFT JOIN presensi_guru p ON p.id_jadwal = sd.id_jadwal AND p.tanggal = sd.tanggal
         GROUP BY sd.nama_guru
@@ -588,6 +587,7 @@ exports.getPerformaGuru = async (req, res) => {
         tidak_hadir_tugas: parseInt(r.tidak_hadir_tugas),
         tidak_hadir: parseInt(r.tidak_hadir),
         tidak_dipresensi: parseInt(r.tidak_dipresensi),
+        ditolak: parseInt(r.ditolak),
         pct_hadir: totalSlot > 0 ? Math.round((hadir / totalSlot) * 100) : 0,
       };
     });
@@ -673,8 +673,6 @@ exports.getUnpresensiStats = async (req, res) => {
       kelasFilter = `AND j.id_kelas = $${params.length}`;
     }
 
-    // Untuk custom range, batasi dateEnd maksimal hari ini
-    // agar slot masa depan tidak ikut dihitung sebagai "belum dipresensi"
     const effectiveDateEnd = range === 'custom'
       ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
       : dateEnd
@@ -706,7 +704,9 @@ exports.getUnpresensiStats = async (req, res) => {
         ${KALENDER_SLOT_EXCLUDE('gs::date')}
         ${kelasFilter}
       )
-      SELECT COUNT(*) AS total_belum
+      SELECT 
+        COUNT(*) FILTER (WHERE p.id_presensi IS NULL) AS total_belum,
+        COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS total_ditolak
       FROM slots s
       LEFT JOIN presensi_guru p ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
       WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected')
@@ -716,7 +716,11 @@ exports.getUnpresensiStats = async (req, res) => {
         )
     `, params);
 
-    res.json({ range: range || 'bulan', total_belum: parseInt(result.rows[0].total_belum) });
+    res.json({
+      range: range || 'bulan',
+      total_belum: parseInt(result.rows[0].total_belum) + parseInt(result.rows[0].total_ditolak),
+      total_ditolak: parseInt(result.rows[0].total_ditolak)
+    });
   } catch (err) {
     console.error('UNPRESENSI STATS ERROR:', err);
     res.status(500).json({ message: 'Server error' });
@@ -1212,10 +1216,9 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
     dateEnd = cfg.dateEnd;
   }
 
-  // Batasi dateEnd maksimal hari ini untuk slot-based query
   const effectiveDateEnd = range === 'custom'
     ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
-    : dateEnd
+    : dateEnd;
 
   const params = [];
   let kelasFilter = '';
@@ -1228,15 +1231,10 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
 
     pool.query(`
       SELECT
-        COUNT(*)                                                        AS total,
-        COUNT(*) FILTER (WHERE p.status = 'Hadir')                     AS hadir,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true
-        )                                                               AS tidak_hadir_tugas,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Tidak Hadir'
-            AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)
-        )                                                               AS tidak_hadir
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE p.status = 'Hadir') AS hadir,
+        COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS tidak_hadir_tugas,
+        COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)) AS tidak_hadir
       FROM presensi_guru p
       JOIN jadwal j ON j.id_jadwal = p.id_jadwal
       JOIN kelas k ON k.id = j.id_kelas
@@ -1250,10 +1248,10 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
     pool.query(`
       WITH slots AS (
         SELECT
-          gs::date                  AS tanggal,
+          gs::date AS tanggal,
           j.id_jadwal,
           j.jam_selesai,
-          j.guru->>'nama_guru'      AS nama_guru
+          j.guru->>'nama_guru' AS nama_guru
         FROM generate_series(${dateStart}, ${effectiveDateEnd}, '1 day'::interval) gs
         JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
           WHEN 0 THEN 'Minggu' WHEN 1 THEN 'Senin' WHEN 2 THEN 'Selasa'
@@ -1278,26 +1276,14 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
       )
       SELECT
         sd.nama_guru,
-        COUNT(*)                                                              AS total_slot,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Hadir' AND p.status_approve = 'Approved'
-        )                                                                     AS hadir,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Tidak Hadir'
-            AND p.memberikan_tugas = true
-            AND p.status_approve = 'Approved'
-        )                                                                     AS tidak_hadir_tugas,
-        COUNT(*) FILTER (
-          WHERE p.status = 'Tidak Hadir'
-            AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)
-            AND p.status_approve = 'Approved'
-        )                                                                     AS tidak_hadir,
-        COUNT(*) FILTER (
-          WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected')
-        )                                                                     AS tidak_dipresensi
+        COUNT(*) AS total_slot,
+        COUNT(*) FILTER (WHERE p.status = 'Hadir' AND p.status_approve = 'Approved') AS hadir,
+        COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true AND p.status_approve = 'Approved') AS tidak_hadir_tugas,
+        COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL) AND p.status_approve = 'Approved') AS tidak_hadir,
+        COUNT(*) FILTER (WHERE (p.id_presensi IS NULL OR p.status_approve = 'Rejected')) AS tidak_dipresensi,
+        COUNT(*) FILTER (WHERE p.status_approve = 'Rejected') AS ditolak
       FROM slots_done sd
-      LEFT JOIN presensi_guru p
-        ON p.id_jadwal = sd.id_jadwal AND p.tanggal = sd.tanggal
+      LEFT JOIN presensi_guru p ON p.id_jadwal = sd.id_jadwal AND p.tanggal = sd.tanggal
       GROUP BY sd.nama_guru
       ORDER BY hadir DESC, sd.nama_guru ASC
     `, params),
@@ -1308,9 +1294,9 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
         RANK() OVER (ORDER BY total_hadir DESC) AS rank
       FROM (
         SELECT
-          (j.guru->>'nama_guru')                              AS nama_guru,
-          COUNT(*) FILTER (WHERE p.status = 'Hadir')         AS total_hadir,
-          COUNT(*)                                            AS total_jadwal
+          (j.guru->>'nama_guru') AS nama_guru,
+          COUNT(*) FILTER (WHERE p.status = 'Hadir') AS total_hadir,
+          COUNT(*) AS total_jadwal
         FROM presensi_guru p
         JOIN jadwal j ON j.id_jadwal = p.id_jadwal
         JOIN kelas k ON k.id = j.id_kelas
@@ -1325,27 +1311,27 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
     `, params),
 
     pool.query(`
-  SELECT
-    nama_guru, total_tidak_hadir, total_tidak_hadir_tugas, total_tidak_hadir_murni,
-    RANK() OVER (ORDER BY total_tidak_hadir DESC) AS rank
-  FROM (
-    SELECT
-      (j.guru->>'nama_guru') AS nama_guru,
-      COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
-      COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS total_tidak_hadir_tugas,
-      COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)) AS total_tidak_hadir_murni
-    FROM presensi_guru p
-    JOIN jadwal j ON j.id_jadwal = p.id_jadwal
-    JOIN kelas k ON k.id = j.id_kelas
-    LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
-    WHERE ${dateFilter}
-      AND p.status_approve = 'Approved'
-      ${kelasFilter}
-      ${KALENDER_PRESENSI_EXCLUDE}
-    GROUP BY nama_guru
-  ) data
-  ORDER BY total_tidak_hadir DESC LIMIT 10
-`, params),
+      SELECT
+        nama_guru, total_tidak_hadir, total_tidak_hadir_tugas, total_tidak_hadir_murni,
+        RANK() OVER (ORDER BY total_tidak_hadir DESC) AS rank
+      FROM (
+        SELECT
+          (j.guru->>'nama_guru') AS nama_guru,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir') AS total_tidak_hadir,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND p.memberikan_tugas = true) AS total_tidak_hadir_tugas,
+          COUNT(*) FILTER (WHERE p.status = 'Tidak Hadir' AND (p.memberikan_tugas = false OR p.memberikan_tugas IS NULL)) AS total_tidak_hadir_murni
+        FROM presensi_guru p
+        JOIN jadwal j ON j.id_jadwal = p.id_jadwal
+        JOIN kelas k ON k.id = j.id_kelas
+        LEFT JOIN jurusan jr ON jr.id = k.id_jurusan
+        WHERE ${dateFilter}
+          AND p.status_approve = 'Approved'
+          ${kelasFilter}
+          ${KALENDER_PRESENSI_EXCLUDE}
+        GROUP BY nama_guru
+      ) data
+      ORDER BY total_tidak_hadir DESC LIMIT 10
+    `, params),
   ]);
 
   const s = summaryResult.rows[0];
@@ -1373,6 +1359,7 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
         tidak_hadir_tugas: parseInt(r.tidak_hadir_tugas),
         tidak_hadir: parseInt(r.tidak_hadir),
         tidak_dipresensi: parseInt(r.tidak_dipresensi),
+        ditolak: parseInt(r.ditolak),
         pct_hadir: slot > 0 ? Math.round((h / slot) * 100) : 0,
       };
     }),
