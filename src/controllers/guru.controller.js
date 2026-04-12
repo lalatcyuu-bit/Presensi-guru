@@ -68,6 +68,27 @@ function getDateConfig(range) {
   }
 }
 
+function getDateRange(range, date_from, date_to) {
+  if (range === 'custom') {
+    if (!date_from || !date_to) {
+      const err = new Error('date_from dan date_to wajib untuk range=custom')
+      err.statusCode = 400
+      throw err
+    }
+    const cfg = getDateConfig('bulan')
+    return {
+      dateFilter: `p.tanggal BETWEEN '${date_from}'::date AND '${date_to}'::date`,
+      dateStart: `'${date_from}'::date`,
+      dateEnd: `'${date_to}'::date`,
+      prevDateFilter: cfg.prevDateFilter,
+      groupExpr: `EXTRACT(DAY FROM p.tanggal)::int`,
+      labels: [],
+      periodKeys: []
+    }
+  }
+  return getDateConfig(range)
+}
+
 /*
   Kalender exclusion SQL untuk query slot-based (generate_series).
   Pakai di dalam CTE slots — aware terhadap kelas/tingkat/jurusan dari jadwal itu sendiri
@@ -377,8 +398,8 @@ exports.getStatistikGuru = async (req, res) => {
 ======================= */
 exports.getSummaryStats = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateFilter, prevDateFilter } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    const { dateFilter, prevDateFilter } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let kelasFilter = '';
@@ -465,8 +486,8 @@ exports.getSummaryStats = async (req, res) => {
 ======================= */
 exports.getPerformaGuru = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateStart, dateEnd } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    const { dateStart, dateEnd } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let kelasFilter = '';
@@ -474,6 +495,12 @@ exports.getPerformaGuru = async (req, res) => {
       params.push(parseInt(id_kelas));
       kelasFilter = `AND j.id_kelas = $${params.length}`;
     }
+
+    // Untuk custom range, batasi dateEnd maksimal hari ini
+    // agar slot masa depan tidak membengkakkan total_slot & tidak_dipresensi
+    const effectiveDateEnd = range === 'custom'
+      ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
+      : dateEnd
 
     const result = await pool.query(`
       WITH slots AS (
@@ -484,7 +511,7 @@ exports.getPerformaGuru = async (req, res) => {
           j.guru->>'nama_guru' AS nama_guru
         FROM generate_series(
           ${dateStart},
-          ${dateEnd},
+          ${effectiveDateEnd},
           '1 day'::interval
         ) gs
         JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
@@ -565,8 +592,8 @@ exports.getPerformaGuru = async (req, res) => {
 ======================= */
 exports.getBarHadirVsTidak = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateFilter } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    const { dateFilter } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let extraFilter = '';
@@ -620,8 +647,8 @@ exports.getBarHadirVsTidak = async (req, res) => {
 ======================= */
 exports.getUnpresensiStats = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateStart } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    const { dateStart, dateEnd } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let kelasFilter = '';
@@ -629,6 +656,12 @@ exports.getUnpresensiStats = async (req, res) => {
       params.push(parseInt(id_kelas));
       kelasFilter = `AND j.id_kelas = $${params.length}`;
     }
+
+    // Untuk custom range, batasi dateEnd maksimal hari ini
+    // agar slot masa depan tidak ikut dihitung sebagai "belum dipresensi"
+    const effectiveDateEnd = range === 'custom'
+      ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
+      : dateEnd
 
     const result = await pool.query(`
       WITH slots AS (
@@ -638,7 +671,7 @@ exports.getUnpresensiStats = async (req, res) => {
           j.jam_selesai
         FROM generate_series(
           ${dateStart},
-          (NOW() AT TIME ZONE 'Asia/Jakarta')::date,
+          ${effectiveDateEnd},
           '1 day'::interval
         ) gs
         JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
@@ -679,8 +712,22 @@ exports.getUnpresensiStats = async (req, res) => {
 ======================= */
 exports.getLineHadirPerGuru = async (req, res) => {
   try {
-    const { range, id_kelas, nama_guru: namaGuruFilter } = req.query;
-    const { dateFilter, groupExpr, labels, periodKeys } = getDateConfig(range);
+    const { range, id_kelas, nama_guru: namaGuruFilter, date_from, date_to } = req.query;
+    let { dateFilter, groupExpr, labels, periodKeys } = getDateRange(range, date_from, date_to);
+
+    // Kalau custom, override groupExpr dan generate labels dari range
+    if (range === 'custom' && date_from && date_to) {
+      groupExpr = `p.tanggal::text`;
+      labels = [];
+      periodKeys = [];
+      const start = new Date(date_from);
+      const end = new Date(date_to);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const iso = d.toISOString().slice(0, 10);
+        labels.push(iso);
+        periodKeys.push(iso);
+      }
+    }
 
     let namaGuruList = [];
 
@@ -771,6 +818,7 @@ exports.getLineHadirPerGuru = async (req, res) => {
 
     res.json({ range: range || 'bulan', labels, datasets, guruList: allGuruList });
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
     console.error('LINE CHART ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
@@ -781,14 +829,28 @@ exports.getLineHadirPerGuru = async (req, res) => {
 ======================= */
 exports.getTrenKehadiranKeseluruhan = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateFilter, groupExpr, labels, periodKeys } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    let { dateFilter, groupExpr, labels, periodKeys } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let kelasFilter = '';
     if (id_kelas) {
       params.push(parseInt(id_kelas));
       kelasFilter = `AND j.id_kelas = $${params.length}`;
+    }
+
+    // Kalau custom, override groupExpr dan generate labels dari range
+    if (range === 'custom' && date_from && date_to) {
+      groupExpr = `p.tanggal::text`;
+      labels = [];
+      periodKeys = [];
+      const start = new Date(date_from);
+      const end = new Date(date_to);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const iso = d.toISOString().slice(0, 10);
+        labels.push(iso);
+        periodKeys.push(iso);
+      }
     }
 
     const result = await pool.query(`
@@ -825,6 +887,7 @@ exports.getTrenKehadiranKeseluruhan = async (req, res) => {
       tidakHadir: periodKeys.map(k => dataMap[k]?.tidakHadir || 0)
     });
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
     console.error('TREN ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
@@ -835,8 +898,8 @@ exports.getTrenKehadiranKeseluruhan = async (req, res) => {
 ======================= */
 exports.getTopGuruHadir = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateFilter } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    const { dateFilter } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let kelasFilter = '';
@@ -890,8 +953,8 @@ exports.getTopGuruHadir = async (req, res) => {
 ======================= */
 exports.getTopGuruTidakHadir = async (req, res) => {
   try {
-    const { range, id_kelas } = req.query;
-    const { dateFilter } = getDateConfig(range);
+    const { range, id_kelas, date_from, date_to } = req.query;
+    const { dateFilter } = getDateRange(range, date_from, date_to);
 
     const params = [];
     let kelasFilter = '';
@@ -1129,6 +1192,11 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
     dateEnd = cfg.dateEnd;
   }
 
+  // Batasi dateEnd maksimal hari ini untuk slot-based query
+  const effectiveDateEnd = range === 'custom'
+    ? `LEAST(${dateEnd}, (NOW() AT TIME ZONE 'Asia/Jakarta')::date)`
+    : dateEnd
+
   const params = [];
   let kelasFilter = '';
   if (id_kelas) {
@@ -1166,7 +1234,7 @@ async function _buildPreviewData({ range, date_from, date_to, id_kelas }) {
           j.id_jadwal,
           j.jam_selesai,
           j.guru->>'nama_guru'      AS nama_guru
-        FROM generate_series(${dateStart}, ${dateEnd}, '1 day'::interval) gs
+        FROM generate_series(${dateStart}, ${effectiveDateEnd}, '1 day'::interval) gs
         JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
           WHEN 0 THEN 'Minggu' WHEN 1 THEN 'Senin' WHEN 2 THEN 'Selasa'
           WHEN 3 THEN 'Rabu'   WHEN 4 THEN 'Kamis' WHEN 5 THEN 'Jumat'
