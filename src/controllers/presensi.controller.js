@@ -829,6 +829,7 @@ exports.approvePresensi = async (req, res) => {
 exports.getRiwayatPresensiKM = async (req, res) => {
   try {
     const { id_kelas, tingkat, jurusan } = req.user;
+    const userId = req.user.id;
 
     if (!id_kelas) {
       return res.status(400).json({ message: 'KM tidak memiliki kelas' });
@@ -840,7 +841,6 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     const status = req.query.status || null;
     const tanggal = req.query.tanggal || null;
 
-    // param[0] = id_kelas, param[1] = tingkat, param[2] = jurusan, param[3] = id_kelas (int)
     const baseParams = [id_kelas, String(tingkat ?? ''), String(jurusan ?? ''), parseInt(id_kelas)];
 
     let dateStart, dateEnd;
@@ -861,7 +861,6 @@ exports.getRiwayatPresensiKM = async (req, res) => {
       statusFilter = `AND p.status_approve = $${baseParams.length}`;
     }
 
-    // Kalender exclude dengan parameterized — $1=id_kelas, $2=tingkat, $3=jurusan, $4=id_kelas(int)
     const kalenderExclude = `
       AND NOT EXISTS (
         SELECT 1 FROM kalender_akademik ka
@@ -938,9 +937,12 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     const totalBelum = parseInt(countResult.rows[0].total_belum, 10);
     const totalPages = Math.ceil(total / limit);
 
-    const paginatedParams = [...baseParams, limit, offset];
-    const limitIdx = baseParams.length + 1;
-    const offsetIdx = baseParams.length + 2;
+    const userIdIdx = baseParams.length + 1;
+    const allBaseParams = [...baseParams, userId];
+
+    const paginatedParams = [...allBaseParams, limit, offset];
+    const limitIdx = allBaseParams.length + 1;
+    const offsetIdx = allBaseParams.length + 2;
 
     const result = await pool.query(
       `${slotsCTE}
@@ -962,10 +964,23 @@ exports.getRiwayatPresensiKM = async (req, res) => {
          p.status_approve,
          p.alasan_reject,
          p.rejected_at,
-         p.created_at
+         p.created_at,
+         CASE WHEN jd.id IS NOT NULL THEN true ELSE false END AS is_opened_by_admin,
+         jd.opened_at AS admin_opened_at,
+         pr.id            AS request_id,
+         pr.status        AS request_status,
+         pr.alasan_reject AS request_alasan_reject,
+         pr.opened_at     AS request_opened_at,
+         pr.created_at    AS request_created_at
        FROM slots s
        LEFT JOIN presensi_guru p
          ON p.id_jadwal = s.id_jadwal AND p.tanggal = s.tanggal
+       LEFT JOIN jadwal_dibuka jd
+         ON jd.id_jadwal = s.id_jadwal AND jd.tanggal = s.tanggal
+       LEFT JOIN presensi_requests pr
+         ON pr.id_jadwal = s.id_jadwal
+         AND pr.tanggal = s.tanggal
+         AND pr.requested_by = $${userIdIdx}
        WHERE NOT (
          s.tanggal = CURRENT_DATE
          AND s.jam_selesai > (NOW() AT TIME ZONE 'Asia/Jakarta')::time
@@ -1004,6 +1019,15 @@ exports.getRiwayatPresensiKM = async (req, res) => {
           tingkat: row.tingkat,
           jurusan: row.jurusan
         },
+        is_opened_by_admin: row.is_opened_by_admin || false,
+        admin_opened_at: row.admin_opened_at || null,
+        request: row.request_id ? {
+          id: row.request_id,
+          status: row.request_status,
+          alasan_reject: row.request_alasan_reject,
+          opened_at: row.request_opened_at,
+          created_at: row.request_created_at
+        } : null,
         created_at: row.created_at
       };
     });
@@ -1021,7 +1045,6 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 /* =======================
    DASHBOARD HARI INI (KM/Piket)
    - Exclude kalender global saja (admin lihat semua kelas)
@@ -1222,8 +1245,6 @@ exports.getPresensi = async (req, res) => {
     const dateStart = tanggal_mulai || tanggal || getWIBDate();
     const dateEnd = tanggal_selesai || tanggal || getWIBDate();
 
-    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-
     const params = [dateStart, dateEnd];
     let kelasClause = '';
     let statusClause = '';
@@ -1262,8 +1283,15 @@ exports.getPresensi = async (req, res) => {
         p.id_presensi, p.tanggal, p.status, p.foto_bukti,
         p.memberikan_tugas, p.catatan, p.status_approve, p.alasan_reject,
         p.diabsen_oleh, p.approved_by, p.created_at, p.updated_at,
+        -- Info jadwal_dibuka (buka manual admin)
         CASE WHEN jd.id IS NOT NULL THEN true ELSE false END AS is_opened_by_admin,
-        jd.opened_at
+        jd.opened_at,
+        -- ← TAMBAHAN: info request dari KM (untuk disable tombol Buka di tab Belum)
+        pr.id            AS request_id,
+        pr.status        AS request_status,
+        pr.requested_by  AS request_by,
+        pr.created_at    AS request_created_at,
+        pr.alasan_reject AS request_alasan_reject
       FROM generate_series($1::date, $2::date, '1 day'::interval) gs
       JOIN jadwal j ON j.hari = CASE EXTRACT(DOW FROM gs::date)
         WHEN 0 THEN 'Minggu' WHEN 1 THEN 'Senin' WHEN 2 THEN 'Selasa'
@@ -1277,6 +1305,14 @@ exports.getPresensi = async (req, res) => {
         ON p.id_jadwal = j.id_jadwal AND p.tanggal = gs::date
       LEFT JOIN jadwal_dibuka jd
         ON jd.id_jadwal = j.id_jadwal AND jd.tanggal = gs::date
+      -- ← TAMBAHAN: join ke presensi_requests (ambil request terbaru per jadwal+tanggal)
+      LEFT JOIN LATERAL (
+        SELECT id, status, requested_by, created_at, alasan_reject
+        FROM presensi_requests
+        WHERE id_jadwal = j.id_jadwal AND tanggal = gs::date
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) pr ON true
       WHERE NOT EXISTS (
         SELECT 1 FROM kalender_akademik ka
         WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
@@ -1300,7 +1336,20 @@ exports.getPresensi = async (req, res) => {
       ORDER BY gs::date DESC, k.name ASC, j.jam_mulai ASC
     `, params);
 
-    res.json(result.rows);
+    // Map response: tambahkan field request_info untuk frontend
+    const rows = result.rows.map(row => ({
+      ...row,
+      // ← field baru untuk frontend admin tab Belum
+      request_info: row.request_id ? {
+        id: row.request_id,
+        status: row.request_status,
+        requested_by: row.request_by,
+        created_at: row.request_created_at,
+        alasan_reject: row.request_alasan_reject
+      } : null
+    }));
+
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
