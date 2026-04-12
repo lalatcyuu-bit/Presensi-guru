@@ -1129,7 +1129,8 @@ exports.getDashboardToday = async (req, res) => {
             guru: row.nama_guru,
             mapel: row.nama_mapel,
             kelas: row.nama_kelas,
-            jam: `${row.jam_mulai}–${row.jam_selesai}`
+            jam: `${row.jam_mulai}–${row.jam_selesai}`,
+            ditolak: row.status_approve === 'Rejected' // ← tambah ini
           });
         }
       }
