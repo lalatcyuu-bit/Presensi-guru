@@ -232,13 +232,11 @@ exports.approveRequest = async (req, res) => {
             });
         }
 
-        // Cek apakah sudah diisi presensi (race condition guard)
         const presensiCheck = await pool.query(
             `SELECT id_presensi FROM presensi_guru WHERE id_jadwal = $1 AND tanggal = $2`,
             [request.id_jadwal, request.tanggal]
         );
         if (presensiCheck.rowCount) {
-            // Langsung update request jadi approved tapi presensi sudah ada
             await pool.query(
                 `UPDATE presensi_requests SET status = 'Approved', opened_at = NOW(), updated_at = NOW() WHERE id = $1`,
                 [id]
@@ -246,11 +244,25 @@ exports.approveRequest = async (req, res) => {
             return res.json({ message: 'Presensi sudah diisi oleh KM', data: request });
         }
 
+        const manualOpenCheck = await pool.query(
+            `SELECT id FROM jadwal_dibuka WHERE id_jadwal = $1 AND tanggal = $2`,
+            [request.id_jadwal, request.tanggal]
+        );
+        if (manualOpenCheck.rowCount > 0) {
+            const updated = await pool.query(
+                `UPDATE presensi_requests SET status = 'Approved', opened_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`,
+                [id]
+            );
+            return res.json({
+                message: 'Jadwal sudah dibuka manual sebelumnya. Request otomatis disetujui.',
+                data: updated.rows[0]
+            });
+        }
+
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
 
-            // Insert ke jadwal_dibuka (ON CONFLICT: kalau sudah ada, jangan update opened_at yang lama)
             await client.query(
                 `INSERT INTO jadwal_dibuka (id_jadwal, tanggal, opened_by)
          VALUES ($1, $2, $3)
@@ -258,7 +270,6 @@ exports.approveRequest = async (req, res) => {
                 [request.id_jadwal, request.tanggal, adminId]
             );
 
-            // Update request jadi Approved + simpan opened_at
             const updated = await client.query(
                 `UPDATE presensi_requests
          SET status = 'Approved', opened_at = NOW(), updated_at = NOW()
@@ -273,16 +284,14 @@ exports.approveRequest = async (req, res) => {
                 message: 'Request disetujui. KM punya 24 jam untuk mengisi presensi.',
                 data: updated.rows[0]
             });
-
         } catch (err) {
             await client.query('ROLLBACK');
             throw err;
         } finally {
             client.release();
         }
-
     } catch (err) {
-        console.error('❌ approveRequest ERROR:', err);
+        console.error('approveRequest ERROR:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };

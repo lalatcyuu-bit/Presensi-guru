@@ -841,7 +841,7 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     const status = req.query.status || null;
     const tanggal = req.query.tanggal || null;
 
-    const baseParams = [id_kelas, String(tingkat ?? ''), String(jurusan ?? ''), parseInt(id_kelas)];
+    const baseParams = [id_kelas, tingkat ?? null, jurusan ?? null, parseInt(id_kelas)];
 
     let dateStart, dateEnd;
     if (tanggal) {
@@ -862,21 +862,21 @@ exports.getRiwayatPresensiKM = async (req, res) => {
     }
 
     const kalenderExclude = `
-      AND NOT EXISTS (
-        SELECT 1 FROM kalender_akademik ka
-        WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
-          AND (
-            ka.target_type = 'global'
-            OR (ka.target_type = 'tingkat' AND ka.target_value @> to_jsonb(ARRAY[$2::text]::text[]))
-            OR (ka.target_type = 'jurusan' AND ka.target_value @> to_jsonb(ARRAY[$3::text]::text[]))
-            OR (ka.target_type = 'kelas'   AND ka.target_value @> to_jsonb(ARRAY[$4::int]::int[]))
-          )
-          AND (
-            ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
-            OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
-          )
+  AND NOT EXISTS (
+    SELECT 1 FROM kalender_akademik ka
+    WHERE gs::date BETWEEN ka.tanggal_mulai AND ka.tanggal_selesai
+      AND (
+        ka.target_type = 'global'
+        OR (ka.target_type = 'tingkat' AND $2::text IS NOT NULL AND ka.target_value @> to_jsonb(ARRAY[$2::text]::text[]))
+        OR (ka.target_type = 'jurusan' AND $3::text IS NOT NULL AND ka.target_value @> to_jsonb(ARRAY[$3::text]::text[]))
+        OR (ka.target_type = 'kelas'   AND ka.target_value @> to_jsonb(ARRAY[$4::int]::int[]))
       )
-    `;
+      AND (
+        ka.jam_mulai IS NULL OR ka.jam_selesai IS NULL
+        OR (j.jam_mulai < ka.jam_selesai AND j.jam_selesai > ka.jam_mulai)
+      )
+  )
+`;
 
     const slotsCTE = `
       WITH slots AS (
@@ -1207,32 +1207,63 @@ exports.openPresensi = async (req, res) => {
 
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const hariTanggal = dayNames[new Date(tanggal + 'T00:00:00+07:00').getDay()];
-
     if (hariTanggal !== jadwalCheck.rows[0].hari) {
       return res.status(400).json({
         message: `Tanggal tidak sesuai. Jadwal ini hari ${jadwalCheck.rows[0].hari}, bukan ${hariTanggal}`
       });
     }
 
-    const result = await pool.query(
-      `INSERT INTO jadwal_dibuka (id_jadwal, tanggal, opened_by)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (id_jadwal, tanggal)
-       DO UPDATE SET opened_at = jadwal_dibuka.opened_at
-       RETURNING *`,
-      [id_jadwal, tanggal, req.user.id]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    res.json({
-      message: 'Presensi berhasil dibuka',
-      data: result.rows[0]
-    });
+      // Lock row supaya tidak ada race condition
+      const activeRequest = await client.query(
+        `SELECT id, status FROM presensi_requests
+         WHERE id_jadwal = $1 AND tanggal = $2
+           AND status IN ('Pending', 'Approved')
+         ORDER BY created_at DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [id_jadwal, tanggal]
+      );
+
+      if (activeRequest.rowCount > 0) {
+        await client.query('ROLLBACK');
+        const reqStatus = activeRequest.rows[0].status;
+        return res.status(409).json({
+          message: reqStatus === 'Pending'
+            ? 'KM sudah mengirim request untuk jadwal ini. Setujui atau tolak request terlebih dahulu.'
+            : 'Request dari KM sudah disetujui. KM sedang dalam window pengisian.'
+        });
+      }
+
+      const result = await client.query(
+        `INSERT INTO jadwal_dibuka (id_jadwal, tanggal, opened_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (id_jadwal, tanggal)
+         DO UPDATE SET opened_at = jadwal_dibuka.opened_at
+         RETURNING *`,
+        [id_jadwal, tanggal, req.user.id]
+      );
+
+      await client.query('COMMIT');
+
+      res.json({
+        message: 'Presensi berhasil dibuka',
+        data: result.rows[0]
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
     console.error('OPEN PRESENSI ERROR:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 /* =======================
    GET ALL PRESENSI (ADMIN/PIKET)
    — tambah LEFT JOIN jadwal_dibuka untuk info opened status
