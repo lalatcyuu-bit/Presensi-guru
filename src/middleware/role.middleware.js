@@ -44,3 +44,15 @@ exports.onlyPiketOrAdminOrKs = (req, res, next) => {
 
   next();
 };
+
+exports.onlyPiketOrAdminOrKsOrPengawas = (req, res, next) => {
+  const role = req.user?.role?.toLowerCase();
+
+  if (!['piket', 'admin', 'ks', 'pengawas'].includes(role)) {
+    return res.status(403).json({
+      message: 'Akses ditolak'
+    });
+  }
+
+  next();
+};
