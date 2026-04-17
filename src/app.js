@@ -32,6 +32,7 @@ app.use('/settings', require('./routes/settings.routes'));
 app.use('/presensi-requests', require('./routes/presensiRequest.routes'));
 
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`Server running di http://localhost:${PORT}`);
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
 });
