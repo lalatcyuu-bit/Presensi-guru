@@ -8,7 +8,7 @@ const role = require('../middleware/role.middleware');
 const jadwalController = require('../controllers/jadwal.controller');
 
 router.post('/', auth, role.onlyAdmin, jadwalController.createJadwal);
-router.get('/', auth, role.onlyAdmin, jadwalController.getJadwal);
+router.get('/', auth, role.onlyPiketOrAdmin, jadwalController.getJadwal);
 router.post("/import", upload.single("file"), jadwalController.importJadwal);
 router.get('/:id', auth, role.onlyAdmin, jadwalController.getJadwalById);
 router.put('/:id', auth, role.onlyAdmin, jadwalController.updateJadwal);

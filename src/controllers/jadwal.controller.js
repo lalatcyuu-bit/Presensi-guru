@@ -211,7 +211,11 @@ exports.getJadwal = async (req, res) => {
 exports.getJadwalById = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM jadwal WHERE id_jadwal = $1`,
+      `SELECT j.*, k.name AS nama_kelas, j2.nama_jurusan
+       FROM jadwal j
+       JOIN kelas k ON k.id = j.id_kelas
+       JOIN jurusan j2 ON j2.id = k.id_jurusan
+       WHERE j.id_jadwal = $1`,
       [req.params.id]
     );
 

@@ -1,0 +1,1 @@
+ALTER TABLE jadwal ADD COLUMN is_opened_by_admin BOOLEAN DEFAULT false;
