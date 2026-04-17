@@ -1,5 +1,13 @@
 'use strict'
 
+const fs = require('fs')
+const path = require('path')
+
+// Taruh di atas fungsi generatePdfHtml
+const LOGO_BASE64 = fs.readFileSync(
+  path.join(__dirname, '../assets/logo.png')
+).toString('base64')
+
 // ── Konstanta layout (identik 100% dengan frontend Vue) ────────────────────
 const PAGE_HEIGHT = 1123
 const ROW_H = 22
@@ -233,18 +241,18 @@ body { background: #fff; font-family: 'Times New Roman', Times, serif; }
   gap: 18px;
 }
 .kop-logo {
-  width: 70px;
-  height: 70px;
-  border-radius: 50%;
-  border: 2px solid #1e3a5f;
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  font-weight: bold;
-  color: #1e3a5f;
-  text-align: center;
-  flex-shrink: 0;
+  overflow: hidden;
+}
+.kop-logo-img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
 }
 .kop-center {
   flex: 1;
@@ -525,7 +533,9 @@ function generatePdfHtml(data, { range, date_from, date_to, kelasName = '' }) {
     pages.push(`
     <div class="pdf-page">
       <div class="kop">
-        <div class="kop-logo">LOGO</div>
+        <div class="kop-logo">
+          <img class="kop-logo-img" src="data:image/png;base64,${LOGO_BASE64}" alt="Logo" />
+        </div>
         <div class="kop-center">
           <div class="kop-instansi">PEMERINTAH DAERAH KABUPATEN BANDUNG BARAT</div>
           <div class="kop-instansi">DINAS PENDIDIKAN DAN KEBUDAYAAN</div>
